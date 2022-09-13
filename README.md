@@ -1,2 +1,1 @@
-# pyffit
-Python Finite Fault Inversion Tools
+More info to come soon...
