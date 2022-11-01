@@ -32,6 +32,8 @@ class Interferogram:
                           'mask',
                           'landmask',
                           'unwrap',]
+        self.data      = {}
+        
         # Spatial
         self.x         = None
         self.y         = None
@@ -51,15 +53,6 @@ class Interferogram:
         self.dates     = None
         self.days      = None
 
-        # InSAR
-        self.amp       = None
-        self.phase     = None
-        self.phasefilt = None
-        self.corr      = None
-        self.mask      = None
-        self.unwrap    = None
-        self.landmask  = None
-
         # Load default attributes
         self.load_track()
         self.load_temporal_info()
@@ -69,6 +62,7 @@ class Interferogram:
         for key in kwargs.keys():
             setattr(self, key, kwargs[key])
 
+
     def load_data(self, files=[], verbose=True):
         """
         Attempt to load interferogram attributes.
@@ -76,9 +70,9 @@ class Interferogram:
         Non-default files may be speficied with files argument.
         """
 
-        for data in self.defaults:
+        for data_type in self.defaults:
             try:
-                file_path = f'{self.path}/{data}.grd'
+                file_path = f'{self.path}/{data_type}.grd'
 
                 with xr.open_dataset(file_path) as grd:
                     try:
@@ -107,17 +101,17 @@ class Interferogram:
                 if self.track == 'D':
                     self.extent = [self.xmin,
                                    self.xmax,
-                                   self.vmax,
-                                   self.ymin,]
+                                   self.ymin,
+                                   self.ymax,]
                 else:
                     self.extent = [self.xmin,
                                    self.xmax,
-                                   self.ymin,
-                                   self.ymax,]
+                                   self.ymax,
+                                   self.ymin,]
                 self.region = self.extent
 
                 # Set data values
-                setattr(self, data, z)
+                self.data[data_type] = z
 
             except ValueError:
                 if verbose:
@@ -153,7 +147,6 @@ class Interferogram:
 
         for split in splits:
             track_strs = self.path.split(split) #[0].split('/')[-4]
-            print(track_strs)
 
             if len(track_strs) > 1:
                 track = track_strs[0].split('/')[-2]
