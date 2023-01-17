@@ -22,7 +22,7 @@ class Interferogram:
     unwrap    - unwrapped phase
     """
 
-    def __init__(self, path, verbose=True, **kwargs):
+    def __init__(self, path, files=[], verbose=True, **kwargs):
         # Initialize attributes
         self.path      = path
         self.defaults  = ['amp',
@@ -45,6 +45,7 @@ class Interferogram:
         self.ylim_ra   = None
         self.extent_ra = None
         self.region_ra = None
+        self.dims_ra   = None
 
         # Spatial (radar coordinates)
         self.lon       = None
@@ -57,8 +58,8 @@ class Interferogram:
         self.ylim_ll   = None
         self.extent_ll = None
         self.region_ll = None
+        self.dims_ll   = None
 
-        self.dims      = None
         self.track     = None
 
         # Temporal
@@ -70,6 +71,9 @@ class Interferogram:
         self.load_track()
         # self.load_temporal_info()
         self.load_data(files=self.defaults, verbose=verbose)
+
+        if len(files) > 0:
+            self.load_data(files=files, verbose=verbose)
 
         # Load additional attributes
         for key in kwargs.keys():
@@ -103,6 +107,7 @@ class Interferogram:
                         self.ymax_ll   = np.nanmax(y)
                         self.xlim_ll   = (self.xmin_ll, self.xmax_ll)
                         self.ylim_ll   = (self.ymin_ll, self.ymax_ll)
+                        self.dims_ll   = z.shape
                         
                         if self.track == 'D':
                             self.extent_ll = [self.xmin_ll,
@@ -115,7 +120,7 @@ class Interferogram:
                                            self.ymax_ll,
                                            self.ymin_ll,]
                         self.region_ll = self.extent_ll
-                        
+
                     except AttributeError:
                         # Try radar coordinates
                         x = grd.x.values
@@ -131,6 +136,7 @@ class Interferogram:
                         self.ymax_ra   = np.nanmax(y)
                         self.xlim_ra   = (self.xmin_ra, self.xmax_ra)
                         self.ylim_ra   = (self.ymin_ra, self.ymax_ra)
+                        self.dims_ra   = z.shape
                         
                         if self.track == 'D':
                             self.extent_ra = [self.xmin_ra,
@@ -146,7 +152,6 @@ class Interferogram:
 
                 # Set data values
                 self.data[data_type] = z
-                self.dims   = z.shape
 
             except ValueError:
                 if verbose:
