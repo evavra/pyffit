@@ -34,18 +34,31 @@ class Interferogram:
                           'unwrap',]
         self.data      = {}
         
-        # Spatial
-        self.x         = None
-        self.y         = None
+        # Spatial (radar coordinates)
+        self.rng       = None
+        self.azi       = None
+        self.xmin_ra   = None
+        self.xmax_ra   = None
+        self.ymin_ra   = None
+        self.ymax_ra   = None
+        self.xlim_ra   = None
+        self.ylim_ra   = None
+        self.extent_ra = None
+        self.region_ra = None
+
+        # Spatial (radar coordinates)
+        self.lon       = None
+        self.lat       = None
+        self.xmin_ll   = None
+        self.xmax_ll   = None
+        self.ymin_ll   = None
+        self.ymax_ll   = None
+        self.xlim_ll   = None
+        self.ylim_ll   = None
+        self.extent_ll = None
+        self.region_ll = None
+
         self.dims      = None
-        self.xmin      = None
-        self.xmax      = None
-        self.ymin      = None
-        self.ymax      = None
-        self.xlim      = None
-        self.ylim      = None
-        self.extent    = None
-        self.region    = None
         self.track     = None
 
         # Temporal
@@ -55,7 +68,7 @@ class Interferogram:
 
         # Load default attributes
         self.load_track()
-        self.load_temporal_info()
+        # self.load_temporal_info()
         self.load_data(files=self.defaults, verbose=verbose)
 
         # Load additional attributes
@@ -70,7 +83,7 @@ class Interferogram:
         Non-default files may be speficied with files argument.
         """
 
-        for data_type in self.defaults:
+        for data_type in files:
             try:
                 file_path = f'{self.path}/{data_type}.grd'
 
@@ -81,37 +94,59 @@ class Interferogram:
                         y = grd.lat.values
                         z = grd.z.values
 
+                        # Set spatial attributes
+                        self.lon      = x
+                        self.lat      = y
+                        self.xmin_ll   = np.nanmin(x)
+                        self.xmax_ll   = np.nanmax(x)
+                        self.ymin_ll   = np.nanmin(y)
+                        self.ymax_ll   = np.nanmax(y)
+                        self.xlim_ll   = (self.xmin_ll, self.xmax_ll)
+                        self.ylim_ll   = (self.ymin_ll, self.ymax_ll)
+                        
+                        if self.track == 'D':
+                            self.extent_ll = [self.xmin_ll,
+                                           self.xmax_ll,
+                                           self.ymin_ll,
+                                           self.ymax_ll,]
+                        else:
+                            self.extent_ll = [self.xmin_ll,
+                                           self.xmax_ll,
+                                           self.ymax_ll,
+                                           self.ymin_ll,]
+                        self.region_ll = self.extent_ll
+                        
                     except AttributeError:
                         # Try radar coordinates
                         x = grd.x.values
                         y = grd.y.values
                         z = grd.z.values
 
-                # Set spatial attributes
-                self.x      = x
-                self.y      = y
-                self.xmin   = np.nanmin(x)
-                self.xmax   = np.nanmax(x)
-                self.ymin   = np.nanmin(y)
-                self.ymax   = np.nanmax(y)
-                self.xlim   = (self.xmin, self.xmax)
-                self.ylim   = (self.ymin, self.ymax)
-                self.dims   = z.shape
-                
-                if self.track == 'D':
-                    self.extent = [self.xmin,
-                                   self.xmax,
-                                   self.ymin,
-                                   self.ymax,]
-                else:
-                    self.extent = [self.xmin,
-                                   self.xmax,
-                                   self.ymax,
-                                   self.ymin,]
-                self.region = self.extent
+                        # Set spatial attributes
+                        self.rng      = x
+                        self.azi      = y
+                        self.xmin_ra   = np.nanmin(x)
+                        self.xmax_ra   = np.nanmax(x)
+                        self.ymin_ra   = np.nanmin(y)
+                        self.ymax_ra   = np.nanmax(y)
+                        self.xlim_ra   = (self.xmin_ra, self.xmax_ra)
+                        self.ylim_ra   = (self.ymin_ra, self.ymax_ra)
+                        
+                        if self.track == 'D':
+                            self.extent_ra = [self.xmin_ra,
+                                           self.xmax_ra,
+                                           self.ymin_ra,
+                                           self.ymax_ra,]
+                        else:
+                            self.extent_ra = [self.xmin_ra,
+                                           self.xmax_ra,
+                                           self.ymax_ra,
+                                           self.ymin_ra,]
+                        self.region_ra = self.extent_ra
 
                 # Set data values
                 self.data[data_type] = z
+                self.dims   = z.shape
 
             except ValueError:
                 if verbose:
