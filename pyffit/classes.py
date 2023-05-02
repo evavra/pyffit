@@ -99,8 +99,8 @@ class Interferogram:
                         z = grd.z.values
 
                         # Set spatial attributes
-                        self.lon      = x
-                        self.lat      = y
+                        self.lon       = x
+                        self.lat       = y
                         self.xmin_ll   = np.nanmin(x)
                         self.xmax_ll   = np.nanmax(x)
                         self.ymin_ll   = np.nanmin(y)
