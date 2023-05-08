@@ -56,7 +56,7 @@ def log_prob_gaussian(m, x, d, S_inv, model, priors):
 
 # -------------------------- Sampling methods -------------------------- 
 def run_hammer(x, d, S_inv, model, priors, log_prob, n_walkers, n_step, m0, backend, moves, 
-               progress=False, init_mode='uniform', run_name='Sampling', parallel=False,):
+               progress=False, init_mode='uniform', run_name='Sampling', parallel=False, processes=8):
     """
     Perform ensemble sampling using the MCMC Hammer.
 
@@ -84,7 +84,7 @@ def run_hammer(x, d, S_inv, model, priors, log_prob, n_walkers, n_step, m0, back
 
     if parallel:
         print('Parallelizing sampling...')
-        with Pool() as pool:
+        with Pool(processes=processes) as pool:
             sampler = emcee.EnsembleSampler(n_walkers, n_dim, log_prob, args=(x, d, S_inv, model, priors), backend=backend, pool=pool, moves=moves)
             sampler.run_mcmc(pos, n_step, progress=progress)
     else:
