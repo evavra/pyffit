@@ -102,8 +102,6 @@ class Fault:
         return
 
 
-
-
 class Patch:
     """
     Rectangular fault patch object with geometric and slip attributes.
@@ -352,4 +350,43 @@ def get_strike(dx, dy):
             else:
                 strike = 270
     return strike
+
+
+def make_simple_FFM(fault_dict, avg_strike=np.nan):
+    """
+    Generate vertical finite fault model from mapped (x, y) cooridinates and depth range.
+
+    INPUT:
+    fault_dict - dictionary with keys ['UTMx', 'UTMy', 'depth']
+
+    OUTPUT:
+    fault - fault object (see pyfft.finite_fault for class descriptions)
+    """
+
+    # Get information from mapped fault dictionary
+    name    = fault_dict['Name']
+    x       = fault_dict['UTMx']
+    y       = fault_dict['UTMy']
+    z       = fault_dict['z']
+    slip    = fault_dict['slip']
+    n_patch = len(x) - 1
+
+    # Form vertex arrays (along-strike, down-dip)
+    X = np.vstack((x, x)).T
+    Y = np.vstack((y, y)).T
+    Z = np.ones((n_patch + 1, 2)) * z
+    
+    # Assign patches to fault
+    fault = Fault(name)
+
+    for i in range(n_patch):
+        # Parse coordinates
+        x_p = [X[i, 0], X[i + 1, 0], X[i + 1, 1], X[i, 1]]
+        y_p = [Y[i, 0], Y[i + 1, 0], Y[i + 1, 1], Y[i, 1]]
+        z_p = [Z[i, 0], Z[i + 1, 0], Z[i + 1, 1], Z[i, 1]]
+
+        # Add patch to list
+        fault.add_patch(x_p, y_p, z_p, slip, avg_strike=avg_strike)
+
+    return fault
 
