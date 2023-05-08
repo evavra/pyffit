@@ -10,9 +10,7 @@ count = 0
 
 def main():
     # Data file
-    # data_file  = '/Users/evavra/Projects/SSAF/Data/InSAR/S1/horiz_full_F2.grd'
-    # data_file   = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/forEllisResamp/DES106/LOS/los_clean_detrend.grd'
-    data_file   = 'maduo/S1_LOS_D103.grd'
+    data_file   = 'tests/maduo/S1_LOS_D106.grd'
 
     # Quadtree parameters
     rms_min      = 1   # RMS threshold (data units)

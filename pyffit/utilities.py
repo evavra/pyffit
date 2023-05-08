@@ -1,5 +1,5 @@
 import pandas as pd
-from map_utilities import proj_ll2utm
+from pyproj import CRS, Proj
 
 
 def proj_ll2utm(x, y, crs_epsg, inverse=False):

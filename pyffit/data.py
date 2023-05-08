@@ -3,6 +3,7 @@ import numpy as np
 import xarray as xr
 import pandas as pd
 import numpy as np
+from pyffit.utilities import proj_ll2utm
 
 def read_grd(file, flatten=False):
     """

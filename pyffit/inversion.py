@@ -6,6 +6,7 @@ import matplotlib.pyplot as plt
 from scipy.optimize import least_squares
 import matplotlib
 import corner
+from multiprocessing import Pool
 
 # -------------------------- Probability methods --------------------------
 def cost_function(m, coords, d, S_inv, model):
@@ -29,19 +30,19 @@ def cost_function(m, coords, d, S_inv, model):
     return np.hstack((0.5**-0.5) * S_inv @ (G_m - d))
 
 
-def log_prob_uniform(m, x, d, S_inv, B, model, priors):
+def log_prob_uniform(m, x, d, S_inv, model, priors):
     """
     Determine log-probaility of model m using a uniform prior
     """
 
     # Check prior
     if np.all([priors[key][0] <= m[i] <= priors[key][1] for i, key in enumerate(priors.keys())]):
-        return log_likelihood(model(m, x), d, S_inv, B) # Log. probability of sample is only the log. likelihood
+        return log_likelihood(model(m, x), d, S_inv) # Log. probability of sample is only the log. likelihood
     else:
         return -np.inf                                    # Exclude realizations outside of priors
 
 
-def log_prob_gaussian(m, x, d, S_inv, B, model, priors):
+def log_prob_gaussian(m, x, d, S_inv, model, priors):
     """
     Determine log-probability of model m using a gaussian prior
     """
@@ -54,7 +55,7 @@ def log_prob_gaussian(m, x, d, S_inv, B, model, priors):
     
 
 # -------------------------- Sampling methods -------------------------- 
-def run_hammer(x, d, S_inv, B, model, priors, log_prob, n_walkers, n_step, m0, backend, moves, 
+def run_hammer(x, d, S_inv, model, priors, log_prob, n_walkers, n_step, m0, backend, moves, 
                progress=False, init_mode='uniform', run_name='Sampling', parallel=False,):
     """
     Perform ensemble sampling using the MCMC Hammer.
@@ -81,13 +82,13 @@ def run_hammer(x, d, S_inv, B, model, priors, log_prob, n_walkers, n_step, m0, b
     # Run ensemble sampler
     s_start = time.time()
 
-    if parallel == 'sampling':
+    if parallel:
         print('Parallelizing sampling...')
         with Pool() as pool:
-            sampler = emcee.EnsembleSampler(n_walkers, n_dim, log_prob, args=(x, d, S_inv, B, model, priors), backend=backend, pool=pool, moves=moves)
+            sampler = emcee.EnsembleSampler(n_walkers, n_dim, log_prob, args=(x, d, S_inv, model, priors), backend=backend, pool=pool, moves=moves)
             sampler.run_mcmc(pos, n_step, progress=progress)
     else:
-        sampler = emcee.EnsembleSampler(n_walkers, n_dim, log_prob, args=(x, d, S_inv, B, model, priors), backend=backend)
+        sampler = emcee.EnsembleSampler(n_walkers, n_dim, log_prob, args=(x, d, S_inv, model, priors), backend=backend, moves=moves)
         sampler.run_mcmc(pos, n_step, progress=progress)
 
     s_end   = time.time() - s_start
@@ -179,7 +180,7 @@ def run_inversion(params):
     return key, m_avg, m_std, m_q1, m_q2, m_q3, m_rms_avg, m_rms_q2
 
 
-def get_starting_model(coords, d, S_inv, B, model, cost_function, priors, prior_mode='uniform'):
+def get_starting_model(coords, d, S_inv, model, cost_function, priors, prior_mode='uniform'):
     """ 
     Solve for initial state using non-linear least squares
     """
@@ -192,15 +193,40 @@ def get_starting_model(coords, d, S_inv, B, model, cost_function, priors, prior_
     # Choose initial guess (means of priors)
     if prior_mode =='Gaussian':
         initial = np.array([priors[prior][0] for prior in priors.keys()])
-
     else:
         initial = np.array([np.mean(priors[prior]) for prior in priors.keys()])
 
+
     # Optimize function & parse results
     bounds = [priors[prior][0] for prior in priors.keys()], [priors[prior][1] for prior in priors.keys()]
-    m0 = least_squares(nll, initial, args=(coords, d, S_inv, model), bounds=(bounds)).x
+    m0     = least_squares(nll, initial, args=(coords, d, S_inv, model), bounds=(bounds)).x
     
     return m0
+
+
+def reload_hammer(result_file):
+    """
+    Load previous inversion results from output HDF5 file.
+    """
+
+    # Get mean and standard deviation of posterior distr
+    # Load samples
+    sampler = emcee.backends.HDFBackend(result_file)
+
+    # Get autocorrelation times
+    autocorr = sampler.get_autocorr_time(tol=0)
+
+    # Flatten chain based off of autocorrelation times (rounded to nearest power of 10 * 3)
+    discard = int(2 * np.nanmax(autocorr))
+    thin    = int(0.5 * np.nanmin(autocorr))
+
+    # Get samples
+    samples       = sampler.get_chain()
+    flat_samples  = sampler.get_chain(discard=discard, thin=thin, flat=True)
+    samp_prob     = sampler.get_log_prob()
+
+
+    return samples, samp_prob, autocorr, discard, thin, flat_samples
 
 
 # -------------------------- Utility methods --------------------------
@@ -208,7 +234,7 @@ def config_backend(file_name, n_walkers, n_dim):
     """
     Set up backend for outputting results to HDF5 file.
     """
-    out_file = f'{file_name}.h5'
+
     backend   = emcee.backends.HDFBackend(file_name)
     backend.reset(n_walkers, n_dim)
 
@@ -245,7 +271,7 @@ def wRMSE(G_m, d, S_inv, B):
 
 
 @numba.jit(nopython=True)
-def log_likelihood(G_m, d, S_inv, B):
+def log_likelihood(G_m, d, S_inv):
     """
     Speedy version of log. likelihood function
 
@@ -258,11 +284,11 @@ def log_likelihood(G_m, d, S_inv, B):
 
     r = d - G_m
 
-    return -0.5 * r.T @ S_inv @ B @ r
+    return -0.5 * r.T @ S_inv @ r
 
 
 # -------------------------- Plotting methods --------------------------
-def plot_chains(samples, samp_prob, discard, labels, units, scales, key, out_dir, dpi=500, figsize=(6.5, 4)):
+def plot_chains(samples, samp_prob, discard, labels, units, scales, key, out_dir, dpi=500, figsize=(20, 20)):
     """
     Plot Markov chains
     """
@@ -295,7 +321,7 @@ def plot_chains(samples, samp_prob, discard, labels, units, scales, key, out_dir
     return
 
 
-def plot_triangle(samples, priors, labels, units, scales, key, out_dir, dpi=500, figsize=(6.5, 4)):
+def plot_triangle(samples, priors, labels, units, scales, key, out_dir, dpi=500, figsize=(20, 20)):
     # Make corner plot
     font = {'size' : 6}
 
@@ -323,24 +349,24 @@ def plot_triangle(samples, priors, labels, units, scales, key, out_dir, dpi=500,
 
 
 # -------------------------- For future re-implementation --------------------------
-def reload_hammer(result_file):
-    # Get mean and standard deviation of posterior distribution
-    # Load samples
-    sampler = emcee.backends.HDFBackend(result_file)
+# def reload_hammer(result_file):
+#     # Get mean and standard deviation of posterior distribution
+#     # Load samples
+#     sampler = emcee.backends.HDFBackend(result_file)
 
-    # Get autocorrelation times
-    autocorr = sampler.get_autocorr_time(tol=0)
+#     # Get autocorrelation times
+#     autocorr = sampler.get_autocorr_time(tol=0)
 
-    # Flatten chain based off of autocorrelation times (rounded to nearest power of 10 * 3)
-    discard = int(10**np.ceil(np.log10(np.nanmax(autocorr)))) * 3
-    thin    = int(np.nanmax(autocorr)//2)
+#     # Flatten chain based off of autocorrelation times (rounded to nearest power of 10 * 3)
+#     discard = int(10**np.ceil(np.log10(np.nanmax(autocorr)))) * 3
+#     thin    = int(np.nanmax(autocorr)//2)
 
-    # Get samples
-    samples       = sampler.get_chain()
-    flat_samples  = sampler.get_chain(discard=discard, thin=thin, flat=True)
-    samp_prob     = sampler.get_log_prob()
+#     # Get samples
+#     samples       = sampler.get_chain()
+#     flat_samples  = sampler.get_chain(discard=discard, thin=thin, flat=True)
+#     samp_prob     = sampler.get_log_prob()
 
-    return samples, samp_prob, autocorr, discard, thin
+#     return samples, samp_prob, autocorr, discard, thin
 
 
 
