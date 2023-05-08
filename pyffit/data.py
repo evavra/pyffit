@@ -2,6 +2,7 @@ import os
 import numpy as np
 import xarray as xr
 import pandas as pd
+import numpy as np
 
 def read_grd(file, flatten=False):
     """
@@ -92,3 +93,37 @@ def make_insar_table(data, look_table, write=True, omit_nans=True, file_name='in
     if write:
         df.to_csv(file_name, sep=' ', header=True, index=False, na_rep='NaN')
     return df
+
+
+def load_gmt_fault_file(file, region=[-180, 180, -90, 90], outname=''):
+    """
+    Load faults from GMT ASCII file
+
+    INPUT:
+    file - fault file
+
+    OUTPUT:
+    faults - list containing arrays of fault coordinates
+    """
+
+    faults = []
+    data   = pd.read_csv(file, header=None, delim_whitespace=True)
+
+    breaks = np.where(data.iloc[:, 0].str.contains(r'>', na=True))[0]
+
+    for i in range(len(breaks) - 1):
+        fault = pd.DataFrame({'Longitude': data.iloc[breaks[i] + 1:breaks[i + 1], 0],
+                              'Latitude': data.iloc[breaks[i] + 1:breaks[i + 1], 1]}).astype(float)
+
+        if any((region[0] <= fault['Longitude']) & (fault['Longitude'] <= region[1]) & (region[2] <= fault['Latitude']) & (fault['Latitude'] <= region[3])):
+            faults.append(fault)
+
+    if len(outname) > 0:
+        with open(outname, 'w') as f:
+            for fault in faults:
+                f.write('> -L"" \n')    
+                for i in range(len(fault)):
+                    f.write(f'{fault.iloc[i, 0]} {fault.iloc[i, 1]} \n')
+
+
+    return faults
