@@ -20,7 +20,6 @@ class Fault:
         self.patches = []
         self.n_patch = 0
         self.extent = []
-        print(name)
 
     def add_patch(self, x, y, z, slip=[0, 0, 0], avg_strike=np.nan):
         """
@@ -39,6 +38,7 @@ class Fault:
         self.extent = [patch_extents[:, 0].min(), patch_extents[:, 1].max(), 
                        patch_extents[:, 2].min(), patch_extents[:, 3].max(),
                        patch_extents[:, 4].min(), patch_extents[:, 5].max()]
+
 
     def greens_functions(self, x, y, z, alpha, slip_modes=[0, 1, 2], components=[0, 1, 2], uniform_slip=False):
         """
