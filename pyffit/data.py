@@ -172,4 +172,5 @@ def read_traces(file, mode, EPSG='32611'):
         for name in faults.keys():
             faults[name]['UTMx'], faults[name]['UTMy'] = proj_ll2utm(faults[name]['lon'], faults[name]['lat'], EPSG)
 
-    return faults
+    # Sort by alphabetical order
+    return dict(sorted(faults.items()))
