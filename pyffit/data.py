@@ -1,13 +1,13 @@
 import os
 import numpy as np
 import xarray as xr
-
+import pandas as pd
 
 def read_grd(file, flatten=False):
     """
     Read NetCDF grid file (x, y, z) to Numpy arrays.
     Specify flatten=True to get flattened arrays and original grid dimensions
-    """
+        """
     
     with xr.open_dataset(file) as grd:
         try:
@@ -69,3 +69,26 @@ def write_grd(x, y, z, file_name, T=True):
         os.system(cmd)
 
     return
+
+
+def make_insar_table(data, look_table, write=True, omit_nans=True, file_name='insar.dat'):
+    """
+    longitude, latitude, and the LOS look vector
+    """
+
+    columns = ['Longitude', 'Latitude', 'Elevation', 'Look_E', 'Look_N', 'Look_Z', 'LOS']
+    look    = np.loadtxt(look_table)
+    
+    print(data.shape)
+    print(look.shape)
+
+    table = np.hstack((look, data))
+
+    df = pd.DataFrame(table, columns=columns)
+    
+    if omit_nans:
+        df = df[~np.isnan(df['LOS'])]
+
+    if write:
+        df.to_csv(file_name, sep=' ', header=True, index=False, na_rep='NaN')
+    return df
