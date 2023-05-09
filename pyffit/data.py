@@ -130,7 +130,7 @@ def load_gmt_fault_file(file, region=[-180, 180, -90, 90], outname=''):
     return faults
 
 
-def read_traces(file, mode, EPSG='32611'):
+def read_traces(file, mode, EPSG='32611', ref_point_utm=[]):
     
     faults = {}
 
@@ -171,6 +171,15 @@ def read_traces(file, mode, EPSG='32611'):
     if EPSG:
         for name in faults.keys():
             faults[name]['UTMx'], faults[name]['UTMy'] = proj_ll2utm(faults[name]['lon'], faults[name]['lat'], EPSG)
+
+            if len(ref_point_utm) == 2:
+                faults[name]['UTMx'] -= ref_point_utm[0]
+                faults[name]['UTMy'] -= ref_point_utm[1]
+                faults[name]['UTMx'] /= 1000
+                faults[name]['UTMy'] /= 1000
+
+
+        
 
     # Sort by alphabetical order
     return dict(sorted(faults.items()))
