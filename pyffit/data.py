@@ -183,3 +183,27 @@ def read_traces(file, mode, EPSG='32611', ref_point_utm=[]):
 
     # Sort by alphabetical order
     return dict(sorted(faults.items()))
+
+
+
+def read_gnss_table(file, columns=[], EPSG='EPSG'):
+    """
+    Read ASCII table of gnss velocities with columns:
+    ['lon', 'lat', 've_mean', 'vn_mean', 'vz_mean', 've_std', 'vn_std',  'vz_std']
+    """
+    df = pd.read_csv(file, delim_whitespace=True, header=0)
+
+    if len(columns) > 0:
+        df.columns = columns
+    elif 'Continuous' in file:
+        df.columns = ['station', 'lat', 'lon', 'vn_mean', 've_mean', 'vn_std', 've_std', 'cor']
+
+    elif 'Survey' in file:
+        df.columns = ['station', 'lat', 'lon', 'vn_mean', 've_mean', 'vz_mean', 'vn_std', 've_std', 'vz_std']
+
+    else:
+        df.columns = ['lon', 'lat', 've_mean', 'vn_mean', 've_std', 'vn_std']
+    if EPSG:
+        df['UTMx'], df['UTMy'] = proj_ll2utm(df['lon'].values, df['lat'].values, EPSG)
+
+    return df
