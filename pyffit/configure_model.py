@@ -1,14 +1,15 @@
 import numpy as np
 from pyffit.data import read_traces
+from pyffit.utilities import proj_ll2utm
 from pyffit.finite_fault import make_simple_FFM
 
 # Parameters
-version        = 7
+version        = 8
 file_faults    = f'/Users/evavra/Projects/Turkey/Data/Model_faults_{version}.csv'
 fault_names    = [
-                  'Amanos',
+                  'AF',
                   'CAFZ',
-                  'Çardak',
+                  'CF',
                   'EAF',
                   # 'Savrun',
                   # 'YGFZ',
@@ -17,6 +18,9 @@ fault_names    = [
                   # 'Pütürge',
                   ]
 EPSG           = '32637' # For Turkey
+ref_point      = [35, 35.7]
+ref_point_utm  = proj_ll2utm(ref_point[0], ref_point[1], EPSG)
+
 poisson_ratio  = 0.25
 shear_modulus  = 30 * 10**9 # From Turcotte & Schubert
 avg_strike     = 235 # approximate average fault strike to determine strike convention
@@ -26,9 +30,10 @@ lmda  = 2 * shear_modulus * poisson_ratio / (1 - 2 * poisson_ratio)
 alpha = (lmda + shear_modulus) / (lmda + 2 * shear_modulus)   
 
 # Load faults
-traces = read_traces(file_faults, 'QGIS', EPSG=EPSG)
+traces = read_traces(file_faults, 'QGIS', ref_point_utm=ref_point_utm, EPSG=EPSG)
 faults = dict((name, traces[name]) for name in fault_names)
 
+# Initialize slip and depth attributes
 for name in faults:
     faults[name]['slip'] = [0, 0, 0]
     faults[name]['z']    = [0, 0]
@@ -57,8 +62,6 @@ def finite_fault_model(m, coords):
         faults[name]['slip'][0] = m[i_slip]
         faults[name]['z'][0]    = m[i_lock]
         fault = make_simple_FFM(faults[name], avg_strike=avg_strike)
-        # print(m[i_slip], m[i_lock])
-        # print(faults[name]['slip'][0], faults[name]['z'][0])
 
         # Comppute displacements
         U += fault.disp(x, y, z, alpha, components=[0, 1])
