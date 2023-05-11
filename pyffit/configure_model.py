@@ -2,10 +2,21 @@ import numpy as np
 from pyffit.data import read_traces
 from pyffit.utilities import proj_ll2utm
 from pyffit.finite_fault import make_simple_FFM
+from sys import platform
 
 # Parameters
 version        = 8
+
+
 file_faults    = f'/Users/evavra/Projects/Turkey/Data/Model_faults_{version}.csv'
+
+if platform == 'darwin':
+    # Mac
+    file_faults = f'/Users/evavra/Projects/Turkey/Data/Model_faults_{version}.csv'
+else:
+    # Linux
+    file_faults = f'/raid/class239/ellis/Turkey/Data/Model_faults_{version}.csv'
+
 fault_names    = [
                   'AF',
                   'CAFZ',
