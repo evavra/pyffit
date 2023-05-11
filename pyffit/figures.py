@@ -122,10 +122,11 @@ def plot_map(data, faults, region):
     return
 
 
-def plot_horiz_field(fields, region=[], crs=ccrs.PlateCarree(), features=['land', 'ocean', 'coastline', 'lakes'], c=None, scale=40, l=20, tick_inc=1, faults={}, 
-                     fault_x='Longitude', fault_y='Latitude', fault_crs=ccrs.PlateCarree(), fault_width=2, fault_colors=[], T=[], swath={}, T_swath=[], 
-                     text_dict={}, cbar_dict={}, title='', cmap='viridis', fig=None, ax=None, show=False, out_name='', dpi=500, figsize=(1.5*6.4, 1.5*4.8), width=3e-2, 
-                     legend_kwargs={}, legend=False, quiv_key_pos=[0.9, 1.05], headwidth=3):
+def plot_horiz_field(fields, region=[], crs=ccrs.PlateCarree(), features=['land', 'ocean', 'coastline', 'lakes'], c=None, 
+                     scale=40, scale_length=20, tick_inc=1, faults={}, fault_x='Longitude', fault_y='Latitude', fault_crs=ccrs.PlateCarree(), 
+                     fault_width=2, fault_colors=[], T=[], swath={}, T_swath=[], text_dict={}, cbar_dict={}, title='', cmap='viridis', 
+                     fig=None, ax=None, show=False, out_name='', dpi=500, figsize=(1.5*6.4, 1.5*4.8), width=3e-2, legend_kwargs={}, 
+                     legend=False, quiv_key_pos=[0.9, 1.05], headwidth=3):
     """
     Plot horizontal velocity field.
     """
@@ -191,12 +192,11 @@ def plot_horiz_field(fields, region=[], crs=ccrs.PlateCarree(), features=['land'
         # Plot error ellipses if specified
         if ('sigma_x' in field.keys()) & ('sigma_y' in field.keys()):
             if (len(field['sigma_x']) == len(field['sigma_y'])) & (len(field['sigma_x']) == len(field['x'])):
-                print('yeet')
                 ax = add_error_ellipses(ax, quiv, field['sigma_x'].values, field['sigma_y'].values, crs, scale, color=field['color'], zorder=30 - i)
 
 
     # Add velocity key
-    qkey = ax.quiverkey(quiv, quiv_key_pos[0], quiv_key_pos[1], l, f'{l} mm/yr', labelpos='E', coordinates='axes', transform=crs)
+    qkey = ax.quiverkey(quiv, quiv_key_pos[0], quiv_key_pos[1], scale_length, f'{scale_length} mm/yr', labelpos='E', coordinates='axes', transform=crs)
 
     # Add text
     if len(text_dict) > 0:
