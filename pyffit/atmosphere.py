@@ -1,5 +1,6 @@
 import numpy as np
 
+
 def get_aps_params(klim=[-3, 5], kinc=0.1, amp_ref=5.0, nexp_ref=1.5, lc_ref=5):
     """
     Get instance of APS spectral parameters based on input reference values. 
@@ -55,11 +56,15 @@ def make_synthetic_aps(X0, Z0, klim=[-3, 5], kinc=0.1, amp_ref=5.0, nexp_ref=1.5
     # Wavenumber matrix (with 0 frequency at the center, even number of points)
     dxm      = dx*1000                                             # grid size,   m
     Kny      = (1/dxm/2)*(2*np.pi)                                 # nyquist frequency * 2pi  =  max wavenumber
-    K        = np.arange(-Kny, Kny - (Kny*2)/N_max, (Kny*2)/N_max) # Get wavemenumber range
+    # K        = np.arange(-Kny, Kny - (Kny*2)/N_max, (Kny*2)/N_max) # Get wavemenumber range
+    K        = np.arange(-Kny, Kny, (Kny*2)/N_max) # Get wavemenumber range
     KXX, KZZ = np.meshgrid(K, K)                                   # KXX and KZZ are nz*nz matrix
     K        = np.sqrt(KXX**2 + KZZ**2)                            # K in m^-1 
 
     # adjust the power-spectrum of the image Pk(k)
+    print(K.shape)
+    print(-Kny, Kny - (Kny*2)/N_max, (Kny*2)/N_max)
+
     aps_K  = np.fft.fftshift(np.fft.fft2(U))                         # direct Fourier transform
     aks_Kv = np.interp(K.flatten()*L, k,  Pk)                                 # fix |U(k)| = Pk(Kv)
     aps_K  = aks_Kv.reshape((N_max, N_max)) * np.exp(1j * np.angle(aps_K)) 
@@ -80,3 +85,25 @@ def make_synthetic_aps(X0, Z0, klim=[-3, 5], kinc=0.1, amp_ref=5.0, nexp_ref=1.5
     Ursub = Ursub/np.max(np.abs(Ursub)) * amp
 
     return Ursub
+
+
+def add_nans(data, nan_frac):
+    """
+    Introduce NaN values to data using uniform random distribution.
+
+    INPUT:
+    data (m, n) - data array
+    nan_frac    - fraction of Nan values to introduce
+
+    OUTPUT:
+    data (m, n) - updated data array with Nan values
+    """
+
+    nans = random.sample(range(0, data.size), int(data.size*nan_frac))
+
+    for i in nans:
+        j = i//data.shape[1]
+        k = i % data.shape[1]
+        data[j, k] = np.nan
+
+    return data
