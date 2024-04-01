@@ -1,7 +1,7 @@
 import numba 
 import numpy as np
 from okada_wrapper import dc3dwrapper
-from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
+from mpl_toolkits.mplot3d.art3d import LineCollection, Line3DCollection, PolyCollection, Poly3DCollection
 from okada_wrapper import dc3dwrapper
 
 
@@ -20,6 +20,7 @@ class Fault:
         self.patches = []
         self.n_patch = 0
         self.extent = []
+
 
     def add_patch(self, x, y, z, slip=[0, 0, 0], avg_strike=np.nan):
         """
@@ -194,6 +195,7 @@ class Patch:
 
         # print(self.strike)
 
+
     def add_self_geometry(self, origin, strike, dip, l, d, slip=[0, 0, 0]):
         """
         Add patch geometry from patch origin, dimesions, and angles.
@@ -213,8 +215,9 @@ class Patch:
         x_r = np.array([0, 0, d * np.cos(self.dip_r), d * np.cos(self.dip_r)])
         y_r = np.array([l/2, -l/2, -l/2, l/2])
         x, y = rotate(x_r, y_r, -self.strike_r)
-        self.strike_width  = [-l/2, l/2]
-        self.dip_width     = [0, d]
+        self.strike_width  = [l/2, -l/2]
+        # self.dip_width     = [d, 0]
+        self.dip_width     = [-d, 0]
         self.x             = x + origin[0]
         self.y             = y + origin[1] 
         self.z             = [0, 0, d * np.sin(self.dip_r), d * np.sin(self.dip_r)]
@@ -224,11 +227,12 @@ class Patch:
                               np.min(self.z), np.max(self.z),]
  
 
-    def poly(self, kind='edges', **kwargs):
+    def poly(self, kind='edges', mode='3d', **kwargs):
         """
         Get polygon object for visualization purposes.
 
-        kind = 'edges' for Line3DCollection or 'faces' for Poly3DCollection.
+        kind = 'edges' for LineCollection or 'faces' for Poly3DCollection.
+        mode = '2d' or '3d'
         """
         x = self.x
         y = self.y
@@ -239,11 +243,16 @@ class Patch:
             yl = np.append(y, y[0])
             zl = np.append(z, z[0])
 
-            return Line3DCollection([list(zip(xl, yl, zl))], **kwargs)
+            if mode == '3d':
+                return Line3DCollection([list(zip(xl, yl, zl))], **kwargs)
+            else:
+                return LineCollection([list(zip(xl, yl))], **kwargs)
 
-        elif kind == 'faces':
-            return Poly3DCollection([list(zip(x, y, z))], **kwargs)
-
+        elif kind == 'face':
+            if mode == '3d':
+                return Poly3DCollection([list(zip(x, y, z))], **kwargs)
+            else:
+                return LineCollection([list(zip(x, y))], **kwargs)
         else:
             print("Must specify kind as 'edges' or 'faces'!")
 
@@ -254,7 +263,6 @@ class Patch:
 
         INPUT:
         x, y, z - (n,) arrays of observation coordinates
-        alpha   - constituitive parameter
         slip    - (3,) array-like containing strike-slip/dip-slip/opening slip components or False to
                   use existing patch slip value (default)
 
@@ -269,8 +277,11 @@ class Patch:
         for i in range(n_obs):
             # Rotate observation points from geographic coordinates to fault coordinates
             x_r, y_r = rotate(x[i] - self.origin[0], y[i] - self.origin[1], -np.pi/2 + self.strike_r) 
+            
+            # print(alpha, [x_r, y_r, z], self.origin[2], self.dip, self.strike_width, self.dip_width, slip)
 
             # Compute displacements due to fault
+            # print(alpha, [x_r, y_r, z], self.origin[2], self.dip, self.strike_width, self.dip_width, slip)
             success, u, grad_u = dc3dwrapper(alpha, [x_r, y_r, z], self.origin[2], self.dip, self.strike_width, self.dip_width, slip)
             assert(success == 0)
             
@@ -309,8 +320,6 @@ class Patch:
                 g[n_comp*i:n_comp*(i + 1), j] = self.disp([x[i]], [y[i]], [z[i]], alpha, unit_slip[mode, :], components=components)
 
         return g
-
-        
 
 
 # ---------- Methods ----------
@@ -357,7 +366,7 @@ def make_simple_FFM(fault_dict, avg_strike=np.nan):
     Generate vertical finite fault model from mapped (x, y) cooridinates and depth range.
 
     INPUT:
-    fault_dict - dictionary with keys ['UTMx', 'UTMy', 'depth']
+    fault_dict - dictionary with keys ['Name', UTMx', 'UTMy', 'z', 'slip']
 
     OUTPUT:
     fault - fault object (see pyfft.finite_fault for class descriptions)
@@ -389,4 +398,5 @@ def make_simple_FFM(fault_dict, avg_strike=np.nan):
         fault.add_patch(x_p, y_p, z_p, slip, avg_strike=avg_strike)
 
     return fault
+
 
