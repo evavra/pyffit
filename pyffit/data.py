@@ -5,11 +5,24 @@ import pandas as pd
 import numpy as np
 from pyffit.utilities import proj_ll2utm
 
-def read_grd(file, flatten=False):
+
+def read_grd(file, coord_type='range', check_lon=True, flatten=False):
     """
-    Read NetCDF grid file (x, y, z) to Numpy arrays.
-    Specify flatten=True to get flattened arrays and original grid dimensions
-        """
+    Read NetCDF grid file (x, y, z) to numpy arrays.
+    
+    INPUT:
+    file      - path to NetCDF file
+    xy_type   - 'range' for default x/y coordinate ranges, 
+                'grid' for full coordinates for each pixel in grid, or 
+                'flatten' to return flattened gridded coordinates and data and original grid dimensions 
+    check_lon - if True, subtract 360 from x if all(abs(x) <= 360)
+
+    OUTPUT:
+    x, y  - spatial coordinates corresponding to specified
+    z     - grid values
+    (dims - original grid dimensions if coord_type == 'flatten')
+
+    """
     
     with xr.open_dataset(file) as grd:
         try:
@@ -18,11 +31,23 @@ def read_grd(file, flatten=False):
             z = grd.z.values
 
         except AttributeError:
-            x = grd.x.values
-            y = grd.y.values
-            z = grd.z.values
+            try:
+                x = grd.longitude.values
+                y = grd.latitude.values
+                z = grd.z.values
 
-    if flatten:
+            except AttributeError:
+                x = grd.x.values
+                y = grd.y.values
+                z = grd.z.values
+
+    if check_lon & (all(np.abs(x) <= 360)):
+        x -= 360
+
+    if coord_type == 'grid':
+        x, y = np.meshgrid(x, y)
+
+    if (coord_type == 'flatten') | flatten:
         dims = z.shape
         X, Y = np.meshgrid(x, y)
         X    = X.flatten()
@@ -35,7 +60,7 @@ def read_grd(file, flatten=False):
         return x, y, z
 
 
-def write_grd(x, y, z, file_name, T=True):
+def write_grd(x, y, z, file_name, T=True, V=False):
 
     """
     Write gridded data to GMT-compatible NetCDF file. 
@@ -67,7 +92,10 @@ def write_grd(x, y, z, file_name, T=True):
         bounds = ' -R' + str(x_min) + '/' + str(x_max) + '/' + str(y_min) + '/' + str(y_max)
         # print(bounds)
         cmd = 'gmt grdedit ' + file_name + ' ' + bounds + ' -T' 
-        print(cmd)
+
+        if V:
+            print(cmd)
+            
         os.system(cmd)
 
     return
@@ -130,18 +158,24 @@ def load_gmt_fault_file(file, region=[-180, 180, -90, 90], outname=''):
     return faults
 
 
-def read_traces(file, mode, EPSG='32611', ref_point_utm=[]):
-    
-    faults = {}
+def read_traces(file, mode, EPSG='32611', ref_point_utm=[], region=[-360, 360, -90, 90]):
+    """
+    Read in table of fault trace segments
+    Modes:
+    SCEC
+    QGIS
+    GMT
+    """
 
     with open(file, 'r') as f:
         # Load SCEC Community Fault Model file
         if mode == 'SCEC':
+            faults = {}
             for line in f:
                 if line[0] == '#':
                     continue
                 if line[0] == '>':
-                    name = line.split()[-1][1:-1]
+                    name = line
                     faults[name] = ({'name': name, 
                                       'lon': [], 
                                       'lat': []})
@@ -152,38 +186,66 @@ def read_traces(file, mode, EPSG='32611', ref_point_utm=[]):
 
         # Load digitized fault traces from QGIS .csv
         elif mode == 'QGIS':
+            faults = {}
             df = pd.read_csv(file, sep=',')
+
             for name in df['Name'].unique():
-                df_fault = df[df['Name'] == name].sort_values('X')
+                # df_fault = df[df['Name'] == name].sort_values('X')
+                df_fault = df[df['Name'] == name]
+
                 faults[name] = {'Name': name, 
                                 'lon':  df_fault['X'].values, 
                                 'lat':  df_fault['Y'].values,}
-    
 
-    # Sort so that DataFrame is in descending latitude 
-    for name in faults:
-        fault = faults[name]
-        if fault['lat'][0] < fault['lat'][-1]:
-            fault['lon'] = fault['lon'][::-1]
-            fault['lat'] = fault['lat'][::-1]
+            # Sort so that DataFrame is in descending latitude 
+            for name in faults:
+                fault = faults[name]
+                if fault['lat'][0] < fault['lat'][-1]:
+                    fault['lon'] = fault['lon'][::-1]
+                    fault['lat'] = fault['lat'][::-1]
 
-    # Add UTM coordinates
-    if EPSG:
-        for name in faults.keys():
-            faults[name]['UTMx'], faults[name]['UTMy'] = proj_ll2utm(faults[name]['lon'], faults[name]['lat'], EPSG)
+            # Add UTM coordinates
+            for name in faults.keys():
+                faults[name]['UTMx'], faults[name]['UTMy'] = proj_ll2utm(faults[name]['lon'], faults[name]['lat'], EPSG)
+
+                if len(ref_point_utm) == 2:
+                    faults[name]['UTMx'] -= ref_point_utm[0]
+                    faults[name]['UTMy'] -= ref_point_utm[1]
+                    faults[name]['UTMx'] /= 1000
+                    faults[name]['UTMy'] /= 1000
+
+            # Sort by alphabetical order
+            return dict(sorted(faults.items()))
+
+        elif mode =='GMT':
+            faults = []
+            i = 0
+            i_seg = []
+
+            for line in f:
+                if line[0] == '#':
+                    continue
+                elif '>' in line:
+                    faults.append([np.nan, np.nan])
+                else:
+                    tmp = line.split()
+                    lon, lat = float(tmp[0]), float(tmp[1])
+                    faults.append([lon, lat])
+
+            faults = np.array(faults)
+            faults = faults[np.isnan(faults[:, 0]) | ((faults[:, 0] >= region[0]) & (faults[:, 0] <= region[1]) & (faults[:, 1] >= region[2]) & (faults[:, 1] <= region[3]))]
+
+            # Get UTM coordinates
+            UTMx, UTMy = proj_ll2utm(faults[:, 0], faults[:, 1], EPSG)
 
             if len(ref_point_utm) == 2:
-                faults[name]['UTMx'] -= ref_point_utm[0]
-                faults[name]['UTMy'] -= ref_point_utm[1]
-                faults[name]['UTMx'] /= 1000
-                faults[name]['UTMy'] /= 1000
+                UTMx -= ref_point_utm[0]
+                UTMy -= ref_point_utm[1]
+                UTMx /= 1000
+                UTMy /= 1000
 
-
-        
-
-    # Sort by alphabetical order
-    return dict(sorted(faults.items()))
-
+            faults = np.hstack((faults, UTMx.reshape(-1, 1), UTMy.reshape(-1, 1)))
+            return faults
 
 
 def read_gnss_table(file, columns=[], EPSG='EPSG'):
@@ -207,3 +269,37 @@ def read_gnss_table(file, columns=[], EPSG='EPSG'):
         df['UTMx'], df['UTMy'] = proj_ll2utm(df['lon'].values, df['lat'].values, EPSG)
 
     return df
+
+
+def read_Slab2_faults(file):
+    """
+    Read Slab 2.0 fault models
+    """
+    rows = []
+
+    with open(file, 'r') as f:
+        for line in f:
+            if line[0] != '>':
+                rows.append([float(val) for val in line.split()])
+
+    mesh = np.array(rows)
+    print(mesh)
+    return mesh
+
+
+def load_look_vectors(look_dir):
+    """
+    Load east, north, and up SAR look vectors from NetCDF files.
+
+    INPUT:
+    look_dir - directory which contains look_e.grd, look_n.grd, and look_u.grd
+
+    OUTPUT:
+    look (m, 3) - 3D array containing east, north, and up SAR look vectors
+    """
+    
+    _, _, look_e = read_grd(f'{look_dir}/look_e.grd')
+    _, _, look_n = read_grd(f'{look_dir}/look_n.grd')
+    _, _, look_u = read_grd(f'{look_dir}/look_u.grd')
+
+    return np.vstack((look_e.flatten(), look_n.flatten(), look_u.flatten())).T
