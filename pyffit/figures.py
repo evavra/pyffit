@@ -11,6 +11,7 @@ from matplotlib.patches import Ellipse
 from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 from matplotlib import colors
 from matplotlib.patches import Polygon, Rectangle
+import corner
 
 
 stem       = '/Users/evavra/Projects/Taiwan/ALOS2/A139/F4/'
@@ -570,3 +571,140 @@ def plot_fault_panels(panels, mesh, triangles, slip, figsize=(14, 8.2), cmap_dis
     plt.close()
 
     return fig, axes
+
+
+def plot_quadtree(data, extent, samp_coords, samp_data, 
+                  trace=[], original_data=[], cell_extents=[], 
+                  cmap_disp='coolwarm', vlim_disp=[], figsize=(14, 8.2), 
+                  markersize=30, file_name='', show=False, dpi=300):
+    """
+    Compare gridded and quadtree downsampled displacements
+    """
+
+    if len(vlim_disp) == 0:
+        vlim_disp = 0.7*np.nanmax(np.abs(data))
+
+    fig   = plt.figure(figsize=figsize)
+    gs    = fig.add_gridspec(1, 3, width_ratios=(1, 1, 0.05), height_ratios=(1,))
+    ax0   = fig.add_subplot(gs[0, 0])
+    ax1   = fig.add_subplot(gs[0, 1])
+    cax   = fig.add_subplot(gs[0, 2])
+    axes  = [ax0, ax1]
+
+
+    # Plot gridded data
+    im = axes[0].imshow(data, extent=extent, vmin=vlim_disp[0], vmax=vlim_disp[1], cmap=cmap_disp, interpolation='none')
+
+    if len(original_data) > 0:
+        axes[1].scatter(original_data[0].flatten(), original_data[1].flatten(), c='k', marker='.', s=1)
+
+    # Plot sampled data
+    im = axes[1].scatter(samp_coords[0], samp_coords[1], c=samp_data, vmin=vlim_disp[0], vmax=vlim_disp[1], cmap=cmap_disp, marker='.', s=markersize)
+
+    # Plot fault trace if specified
+    if len(trace) > 1:
+        # trace = fault_mesh[:, :2][fault_mesh[:, 2] == 0]
+        axes[0].plot(trace[:, 0], trace[:, 1], linewidth=2, c='k')
+        axes[1].plot(trace[:, 0], trace[:, 1], linewidth=2, c='k')
+
+    if len(cell_extents) > 0:
+        for cell_extent in cell_extents:
+            for ax in axes:
+                # Create a rectangle patch
+                cell = Rectangle((cell_extent[0], cell_extent[2]), cell_extent[1] - cell_extent[0], cell_extent[3] - cell_extent[2], fill=False, edgecolor='k', linewidth=0.25)
+
+                # Add the rectangle patch to the axes
+                ax.add_patch(cell)
+
+    # Axes settings
+    axes[0].set_ylabel('North (km)')
+    axes[0].set_xlabel('East (km)')
+    axes[0].set_xlim(extent[0], extent[1])
+    axes[0].set_ylim(min(extent[2:]), max(extent[2:]))
+
+    axes[1].set_xlabel('East (km)')
+    axes[1].set_ylabel('')
+    axes[1].set_yticks([])
+    axes[1].set_xlim(extent[0], extent[1])
+    axes[1].set_ylim(min(extent[2:]), max(extent[2:]))
+
+    ax1.set_aspect('equal')
+    ax0.set_aspect('equal')
+
+    fig.colorbar(im, cax=cax, label='LOS Displacement (mm)', shrink=0.3)
+
+    if len(file_name) > 0:
+        fig.savefig(file_name, dpi=dpi)
+
+    if show:
+        plt.show()
+
+    plt.close()
+
+    return fig, axes
+
+    
+def plot_chains(samples, samp_prob, discard, labels, units, scales, key, out_dir):
+    """
+    Plot Markov chains
+    """
+    n_dim = len(labels)
+
+    fig, axes = plt.subplots(n_dim + 1, figsize=(6.5, 4), sharex=True)
+    
+    for i in range(n_dim):
+        ax = axes[i]
+        ax.plot(samples[discard:, :, i] * scales[i], "k", alpha=0.3, linewidth=0.5)
+        # ax.plot(samples[:, :, i] * scales[i], "k", alpha=0.3, linewidth=0.5)
+        # ax.plot(samples[:discard, :, i] * scales[i], color='tomato', linewidth=0.5)
+        ax.set_xlim(0, len(samples))
+        ax.set_ylabel(labels[i])
+        ax.yaxis.set_label_coords(-0.1, 0.5)
+
+    # Plot log-probability
+    ax = axes[n_dim]
+    ax.plot(samp_prob[discard:], "k", alpha=0.3, linewidth=0.5) # log(p(d|m))
+    # ax.plot(samp_prob, "k", alpha=0.3, linewidth=0.5)
+    # ax.plot(samp_prob[:discard], color='tomato', linewidth=0.5)
+    ax.set_xlim(0, len(samples))
+    ax.yaxis.set_label_coords(-0.1, 0.5)
+    ax.set_ylabel(r'log(p(m|d))') # log(p(d|m))
+    axes[-1].set_xlabel("Step");
+    fig.tight_layout()
+    fig.savefig(f'{out_dir}/chains/{key}_chains.png', dpi=dpi)
+    plt.close()
+    
+    return
+
+
+def plot_triangle(samples, priors, labels, units, scales, key, out_dir, **kwargs):
+    # Make corner plot
+    font = {'size'   : 6}
+
+    matplotlib.rc('font', **font)
+
+    if 'figsize' in kwargs.keys():
+        figsize = kwargs['figsize']
+    else:
+        figsize=(6.5, 4)
+
+    prior_vals = [[prior * scales[i] for prior in priors[key]] for i, key in enumerate(priors.keys())]
+
+    fig = plt.figure(figsize=figsize, tight_layout={'h_pad':0.1, 'w_pad': 0.1})
+    fig.suptitle(key)
+    fig = corner.corner(samples * scales, 
+                        quantiles=[0.16, 0.5, 0.84], 
+                        range=prior_vals,
+                        labels=[f'{label} ({unit})' for label, unit in zip(labels, units)], 
+                        label_kwargs={'fontsize': 8},
+                        show_titles=True,
+                        title_kwargs={'fontsize': 8},
+                        fig=fig, 
+                        labelpad=0.1
+                        )
+
+    # fig.tight_layout(pad=1.5)
+    fig.savefig(f'{out_dir}/triangles/{key}_triangle.png', dpi=dpi)
+    plt.close()
+    return
+
