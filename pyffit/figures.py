@@ -8,13 +8,16 @@ from cartopy.io.shapereader import Reader
 from cartopy.feature import ShapelyFeature
 from pyffit.data import read_traces
 from matplotlib.patches import Ellipse
+from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
+from matplotlib import colors
+from matplotlib.patches import Polygon, Rectangle
 
 
 stem       = '/Users/evavra/Projects/Taiwan/ALOS2/A139/F4/'
 intf_paths = [
               stem + 'intf/20220807_20220918', 
               stem + 'iono_phase/intf_h/20220807_20220918',
-              stem + 'iono_phase/intf_l/20220807_20220918',
+          
               stem + 'iono_phase/intf_o/20220807_20220918']
     
 data_type = 'phasefilt'
@@ -86,7 +89,7 @@ def intf_panels(intf_paths, data_type, labels, mask=False, corr_min=None, grid_d
     return
 
 
-def plot_map(data, faults, region):
+def plot_field(data, faults, region):
     """
     Make horizointal velocity field map with faults.
     """
@@ -173,12 +176,12 @@ def plot_horiz_field(fields, region=[], crs=ccrs.PlateCarree(), features=['land'
         if type(faults) == dict:
             for i, name in enumerate(faults):
                 fault = faults[name]
-                ax.plot(fault[fault_x], fault[fault_y], c=c[i], linewidth=fault_width, transform=fault_crs, zorder=10, label=fault['Name'] + f'')
+                ax.plot(fault[fault_x], fault[fault_y], c=fault['color'], linewidth=fault_width, transform=fault_crs, zorder=10, label=fault['Name'] + f'')
             if legend:
                 ax.legend(**legend_kwargs)
         else:
             for i, fault in enumerate(faults):
-                ax.plot(fault[fault_x], fault[fault_y], c=c[i], linewidth=fault_width, transform=fault_crs, zorder=10)
+                ax.plot(fault[fault_x], fault[fault_y], c=fault['color'], linewidth=fault_width, transform=fault_crs, zorder=10)
 
     # Plot swath bbox
     if len(swath) > 0:
@@ -289,3 +292,281 @@ def add_error_ellipses(ax, quiv, sigma_x, sigma_y, crs, scale, alpha=1, color='C
 
     return ax
 
+
+def plot_grid_map(data, extent, region=[], fig_ax=(), projection=ccrs.PlateCarree(), vlim=[], x_tick_inc=0, y_tick_inc=0, 
+                  cmap='coolwarm', cbar_label='', title='',
+                  dpi=500, show=False, file_name='', cbar=False):
+    """
+    Make map of gridded data.
+    """
+
+    if len(fig_ax) == 0:
+        fig = plt.figure(figsize=(14, 8.2))
+        ax  = fig.add_subplot(1, 1, 1, projection=projection)
+    else:
+        fig, ax = fig_ax
+
+    if len(vlim) == 0:
+        vlim = [np.nanmin(data), np.nanmax(data)]
+
+    if len(title) > 0:
+        ax.set_title(title)
+
+    # Plot features
+    ax.add_feature(cfeature.LAND.with_scale('10m'), color='white')
+    ax.add_feature(cfeature.LAKES.with_scale('10m'))
+
+    # Plot data
+    im = ax.imshow(data, extent=extent, transform=projection, cmap=cmap, interpolation='none', vmin=vlim[0], vmax=vlim[1])
+        
+    # Fault stuff
+    # ax.plot(faults[:, 0], faults[:, 1],               c='gray',    linewidth=1, transform=projection,)
+    # ax.plot(qfaults[:, 0], qfaults[:, 1],             c='gray', lw=1, transform=projection,)
+    # ax.plot(trace['Longitude'], trace['Latitude'],    c='k',    lw=2, transform=projection, zorder=10)
+    # ax.scatter(insar_data['Longitude'], insar_data['Latitude'], c='k',    s=10, transform=projection, zorder=10)
+
+    # Axes settings
+    ax.set_xlabel('Longitude')
+    ax.set_ylabel('Latitude')
+    
+    if len(region) > 0:
+        ax.set_xlim(region[:2])
+        ax.set_ylim(region[2:])
+
+        if x_tick_inc > 0:        
+            ax.set_xticks(np.arange(region[0], region[1] + x_tick_inc, x_tick_inc))
+
+        if y_tick_inc > 0:
+            ax.set_yticks(np.arange(region[2], region[3] + y_tick_inc, y_tick_inc))
+
+
+    if len(cbar_label) > 0:    
+        fig.colorbar(im, ax=ax, label=cbar_label, orientation='horizontal', pad=0.05)
+
+    if len(file_name) > 0:
+        fig.savefig(file_name, dpi=dpi)
+    
+    if show:
+        plt.show()
+
+
+    return
+
+
+def plot_fault_3d(mesh, triangles, c=[], edges=False, cmap_name='viridis', cbar_label='Slip (m)', 
+                  labelpad=20, azim=45, elev=10, n_seg=100, n_tick=11, alpha=1, vlim_slip=[],
+                  filename='', show=True, dpi=500, invert_zaxis=False, edge_kwargs=dict(edgecolor='k', linewidth=0.25),
+                  figsize=(14, 8.2), cbar_kwargs=dict(location='bottom', pad=-0.1, shrink=0.5)):
+    """
+    Make 3D plot of finite fault model.
+
+    INPUT:
+    mesh (M, 3)      - array of coordinates (x,y,z) of triangular mesh verticies
+    triangles (N, 3) - array containing vertex indices of each triangle in the mesh. Each row corresponds to one triangle
+    """
+
+    # Make 3D plot
+    fig = plt.figure(figsize=figsize)
+    ax  = fig.add_subplot(projection='3d')
+    fig.subplots_adjust(top=1.2, bottom=-.1)
+    
+    # Plot faces
+    if len(c) > 0:
+        # Create colorbar for slip patches
+        if len(vlim_slip) == 0:
+            vmin = np.min(c)
+            vmax = np.max(c)
+        else:
+            vmin = vlim_slip[0]
+            vmax = vlim_slip[1]
+
+        cvar  = c
+        ticks = np.linspace(vmin, vmax, n_tick)
+        cval  = (cvar - vmin)/(vmax - vmin) # Normalized color values
+
+        cmap  = colors.LinearSegmentedColormap.from_list(cmap_name, plt.get_cmap(cmap_name, 265)(np.linspace(0, 1, 265)), n_seg)
+        sm    = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=vmin, vmax=vmax))
+        c     = cmap(cval)
+
+        # Add colorbar
+        cbar  = plt.colorbar(sm, label=cbar_label, **cbar_kwargs,)
+        cbar.set_ticks(ticks)
+
+        for tri, c0 in zip(triangles, c):
+            coords = mesh[tri]
+
+            # Plot triangles
+            poly  = Poly3DCollection([list(zip(coords[:, 0], coords[:, 1], coords[:, 2]))], 
+                                     color=c0, alpha=alpha, linewidth=0.1)
+            ax.add_collection3d(poly)
+        
+    # Plot edges
+    if (len(c) == 0) | (edges == True):
+        for tri in triangles:
+            coords = np.vstack((mesh[tri], mesh[tri][0, :]))
+            # Plot edges
+            edge  = Line3DCollection([list(zip(coords[:, 0], coords[:, 1], coords[:, 2]))], **edge_kwargs)
+            ax.add_collection3d(edge)
+
+        # # Plot vertex IDs
+        # for vtx, label in zip(mesh[tri], tri):
+        #     ax.text(vtx[0], vtx[1], vtx[2], str(label), fontsize=6)
+
+    # Set axes/aspect ratio    
+    ranges = np.ptp(mesh, axis=0)
+    ax.set_box_aspect(ranges) 
+    ax.set_xlim(mesh[:, 0].min(), mesh[:, 0].max())
+    ax.set_ylim(mesh[:, 1].min(), mesh[:, 1].max())
+    ax.set_zlim(mesh[:, 2].min(), mesh[:, 2].max())
+
+    zticks = ax.get_zticks()
+
+    ax.set_zticklabels([f'{int(-tick)}' for tick in zticks])
+    
+    if invert_zaxis:
+        ax.invert_zaxis()
+    ax.set_xlabel('East (km)',  labelpad=labelpad)
+    ax.set_ylabel('North (km)', labelpad=labelpad)
+    ax.set_zlabel('Depth (km)', labelpad=labelpad/4)
+    # ax.view_init(azim=45, elev=90)
+    ax.view_init(azim=azim, elev=elev)
+    fig.tight_layout()
+
+    if len(filename) > 0:
+        plt.savefig(filename, dpi=dpi)
+
+    if show:
+        plt.show()
+    plt.close()
+    
+    return fig, ax
+
+
+def plot_fault_panels(panels, mesh, triangles, slip, figsize=(14, 8.2), cmap_disp='coolwarm', cmap_slip='viridis', x_ax='east',
+                      trace=False, vlim_disp=[], vlim_slip=[], xlim=[], ylim=[], markersize=10, n_tick=11, n_seg=10, mu=0, eta=0, file_name='', show=False, dpi=300):
+    """
+    Plot three displacement panels above side-view of fault model.
+    """
+
+    grid_dims = (1, 3)
+
+    # Set up figure and axes
+    fig   = plt.figure(figsize=figsize)
+    gs    = fig.add_gridspec(2, 4, width_ratios=(1, 1, 1, 0.05), height_ratios=(1, 1))
+    ax0   = fig.add_subplot(gs[0, 0])
+    ax1   = fig.add_subplot(gs[0, 1])
+    ax2   = fig.add_subplot(gs[0, 2])
+    ax3   = fig.add_subplot(gs[1, :-1])
+    cax0  = fig.add_subplot(gs[0, 3])
+    cax1  = fig.add_subplot(gs[1, -1])
+    axes  = [ax0, ax1, ax2, ax3]
+    caxes = [cax0, cax1]
+
+    # Set up colorbar for fault slip
+    alpha = 1
+    edges = True
+    cvar  = slip
+
+    if x_ax == 'east':
+        xlabel = 'East (km)'
+        x_idx  = 0
+    else:
+        xlabel = 'North (km)'
+        x_idx  = 1
+
+    if len(vlim_slip) == 0:
+        vmin = slip.min()
+        vmax = slip.max()
+    else:
+        vmin = vlim_slip[0]
+        vmax = vlim_slip[1]
+
+    ticks = np.linspace(vmin, vmax, n_tick)
+    cval  = (cvar - cvar.min())/(cvar.max() - cvar.min()) # Normalized color values
+    cmap  = colors.LinearSegmentedColormap.from_list(cmap_slip, plt.get_cmap(cmap_slip, 265)(np.linspace(0, 1, 265)), n_seg)
+    sm    = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=vmin, vmax=vmax))
+    c     = cmap(cval)
+
+    all_x = []
+    all_y = []
+
+    if len(vlim_disp) == 0:
+        all_data  = np.concatenate((panels[0]['data'].flatten(), panels[1]['data'].flatten(), panels[2]['data'].flatten()))
+        vlim_disp = 0.7*np.nanmax(np.abs(all_data))
+
+    # Plot displacement panels
+    for i in range(3):
+        panel = panels[i]
+        data  = panel['data']
+        label = panel['label']
+
+        if len(data.shape) == 2:
+            extent = panel['extent']
+            all_x.extend([extent[0], extent[1]])
+            all_y.extend([extent[3], extent[2]])
+
+            im = axes[i].imshow(data, extent=extent, vmin=vlim_disp[0], vmax=vlim_disp[1], cmap=cmap_disp, interpolation='none')
+
+        else:
+            x = panel['x']
+            y = panel['y']
+
+            all_x.extend([x.min(), x.max()])
+            all_y.extend([y.min(), y.max()])
+
+            im = axes[i].scatter(x, y, c=data, vmin=vlim_disp[0], vmax=vlim_disp[1], cmap=cmap_disp, marker='.', s=markersize)
+            axes[i].set_aspect('equal')
+
+
+    # Get axes limits
+    if len(xlim) == 0:
+        xlim = [np.nanmin(all_x), np.nanmax(all_x)]
+
+    if len(ylim) == 0:
+        ylim = [np.nanmin(all_y), np.nanmax(all_y)]
+
+    # Plot fault
+    for i in range(3):
+
+        # for z in np.unique(mesh[:, 2]):
+            # axes[i].plot(mesh[:, 0][mesh[:, 2] == z], mesh[:, 1][mesh[:, 2] == z], linewidth=2)
+        axes[i].plot(mesh[:, 0][mesh[:, 2] == 0], mesh[:, 1][mesh[:, 2] == 0], linewidth=1, c='k')
+
+        axes[i].set_title(panels[i]['label'])
+        axes[i].set_xlim(xlim)
+        axes[i].set_ylim(ylim)
+
+    # Plot fault mesh and slip distribution
+    for tri, c0 in zip(triangles, c):
+        pts = mesh[tri]
+
+        # Plot triangles
+        face = Polygon(list(zip(pts[:, x_idx], pts[:, 2])), color=c0, alpha=alpha, linewidth=0.1)
+        ax3.add_patch(face)
+
+        edges = Polygon(list(zip(pts[:, x_idx], pts[:, 2])), edgecolor='k', facecolor='none', alpha=1, linewidth=0.5)
+        ax3.add_patch(edges)
+            
+    # Axis settings
+    ax0.set_ylabel('North (km)')
+    ax0.set_xlabel('East (km)')
+    ax1.set_xlabel('East (km)')
+    ax2.set_xlabel('East (km)')
+    ax3.set_xlabel(xlabel)
+    ax3.set_ylabel('Depth (km)')
+    ax3.set_xlim(mesh[:, x_idx].min(), mesh[:, x_idx].max())
+    ax3.set_ylim(mesh[:, 2].min(), mesh[:, 2].max())
+    ax3.set_aspect('equal')
+    fig.colorbar(im, cax=cax0, label='Displacement (mm)', shrink=0.05)
+    fig.colorbar(sm, cax=cax1, label='Slip (mm)')
+    fig.tight_layout()
+
+    if len(file_name) > 0:
+        fig.savefig(file_name, dpi=dpi)
+        
+    if show:
+        plt.show()
+
+    plt.close()
+
+    return fig, axes
