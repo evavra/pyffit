@@ -26,8 +26,8 @@ def cost_function(m, coords, d, S_inv, model):
 
     # Make forward model calculation
     G_m = model(m, coords)
-
-    return np.hstack((0.5**-0.5) * S_inv @ (G_m - d))
+    r = G_m - d
+    return np.hstack((0.5**-0.5) * S_inv @ r)
 
 
 def log_prob_uniform(m, x, d, S_inv, model, priors):
@@ -54,8 +54,24 @@ def log_prob_gaussian(m, x, d, S_inv, model, priors):
     return log_likelihood(model(m, x), d, S_inv, B) + log_prior_gaussian(m, mu, sigma) # Log. probability is sum of log. likelihood and log. prior
     
 
+@numba.jit(nopython=True)
+def log_likelihood(G_m, d, S_inv, B):
+    """
+    Speedy version of log. likelihood function
+
+    INPUT:
+    G_m   - model realization
+    d     - data values
+    S_inv - inverse covariance matrix
+    B     - data weights
+    """
+
+    r = d - G_m
+
+    return -0.5 * r.T @ S_inv @ B @ r
+
 # -------------------------- Sampling methods -------------------------- 
-def run_hammer(x, d, S_inv, model, priors, log_prob, n_walkers, n_step, m0, backend, moves, 
+def run_hammer(log_prob_args, priors, log_prob, n_walkers, n_step, m0, backend, moves, 
                progress=False, init_mode='uniform', run_name='Sampling', parallel=False, processes=8):
     """
     Perform ensemble sampling using the MCMC Hammer.
@@ -67,12 +83,12 @@ def run_hammer(x, d, S_inv, model, priors, log_prob, n_walkers, n_step, m0, back
     n_dim = len(priors)
 
     # Initialize walkers around MLE solution
-    #   Gaussian ball
+    # a) Gaussian ball
     if init_mode == 'gaussian':
         b_size = 1e-1
         pos = m0 + b_size * m0 * np.random.randn(n_walkers, n_dim)
 
-    #   Uniform over priors
+    # b) Uniform over priors
     elif init_mode == 'uniform':
         pos   = np.empty((n_walkers, n_dim))
         for i in range(n_walkers):
@@ -83,15 +99,17 @@ def run_hammer(x, d, S_inv, model, priors, log_prob, n_walkers, n_step, m0, back
     s_start = time.time()
 
     if parallel:
+        os.environ["OMP_NUM_THREADS"] = "1"
         print('Parallelizing sampling...')
+
         with Pool(processes=processes) as pool:
-            sampler = emcee.EnsembleSampler(n_walkers, n_dim, log_prob, args=(x, d, S_inv, model, priors), backend=backend, pool=pool, moves=moves)
+            sampler = emcee.EnsembleSampler(n_walkers, n_dim, log_prob, args=log_prob_args, backend=backend, pool=pool, moves=moves)
             sampler.run_mcmc(pos, n_step, progress=progress)
     else:
-        sampler = emcee.EnsembleSampler(n_walkers, n_dim, log_prob, args=(x, d, S_inv, model, priors), backend=backend, moves=moves)
+        sampler = emcee.EnsembleSampler(n_walkers, n_dim, log_prob, args=log_prob_args, backend=backend, moves=moves)
         sampler.run_mcmc(pos, n_step, progress=progress)
 
-    s_end   = time.time() - s_start
+    s_end = time.time() - s_start
 
     if s_end > 120:
         print(f'Time elapsed: {s_end/60:.2f} min')
@@ -103,7 +121,7 @@ def run_hammer(x, d, S_inv, model, priors, log_prob, n_walkers, n_step, m0, back
     print(f'Autocorrelation times: {autocorr}')
 
     # Flatten chain and thin based off of autocorrelation times
-    discard = int(2 * np.nanmax(autocorr))
+    discard = int(5 * np.nanmax(autocorr))
     thin    = int(0.5 * np.nanmin(autocorr))
 
     print(f'Burn-in:  {discard} samples')
@@ -196,10 +214,9 @@ def get_starting_model(coords, d, S_inv, model, cost_function, priors, prior_mod
     else:
         initial = np.array([np.mean(priors[prior]) for prior in priors.keys()])
 
-
     # Optimize function & parse results
     bounds = [priors[prior][0] for prior in priors.keys()], [priors[prior][1] for prior in priors.keys()]
-    m0     = least_squares(nll, initial, args=(coords, d, S_inv, model), bounds=(bounds)).x
+    m0     = least_squares(nll, initial, args=(coords, d, S_inv, model), bounds=(bounds), jac='3-point').x
     
     return m0
 
@@ -288,22 +305,24 @@ def log_likelihood(G_m, d, S_inv):
 
 
 # -------------------------- Plotting methods --------------------------
-def plot_chains(samples, samp_prob, discard, labels, units, scales, key, out_dir, dpi=500, figsize=(20, 20)):
+def plot_chains(samples, samp_prob, priors, discard, labels, units, scales, key, out_dir, dpi=200, figsize=(20, 15)):
     """
     Plot Markov chains
     """
     n_dim = len(labels)
+
+    prior_vals = [[prior * scales[i] for prior in priors[key]] for i, key in enumerate(priors.keys())]
+
 
     fig, axes = plt.subplots(n_dim + 1, figsize=figsize, sharex=True)
     
     for i in range(n_dim):
         ax = axes[i]
         ax.plot(samples[discard:, :, i] * scales[i], "k", alpha=0.3, linewidth=0.5)
-        # ax.plot(samples[:, :, i] * scales[i], "k", alpha=0.3, linewidth=0.5)
-        # ax.plot(samples[:discard, :, i] * scales[i], color='tomato', linewidth=0.5)
         ax.set_xlim(0, len(samples))
-        ax.set_ylabel(labels[i])
-        ax.yaxis.set_label_coords(-0.1, 0.5)
+        ax.set_ylim(prior_vals[i][0], prior_vals[i][1])
+        ax.set_ylabel(labels[i] + f'\n ({units[i]})')
+        # ax.yaxis.set_label_coords(-0.1, 0.5)
 
     # Plot log-probability
     ax = axes[n_dim]
@@ -311,7 +330,7 @@ def plot_chains(samples, samp_prob, discard, labels, units, scales, key, out_dir
     # ax.plot(samp_prob, "k", alpha=0.3, linewidth=0.5)
     # ax.plot(samp_prob[:discard], color='tomato', linewidth=0.5)
     ax.set_xlim(0, len(samples))
-    ax.yaxis.set_label_coords(-0.1, 0.5)
+    # ax.yaxis.set_label_coords(-0.1, 0.5)
     ax.set_ylabel(r'log(p(m|d))') # log(p(d|m))
     axes[-1].set_xlabel("Step");
     fig.tight_layout()
@@ -321,7 +340,7 @@ def plot_chains(samples, samp_prob, discard, labels, units, scales, key, out_dir
     return
 
 
-def plot_triangle(samples, priors, labels, units, scales, key, out_dir, dpi=500, figsize=(20, 20)):
+def plot_triangle(samples, priors, labels, units, scales, key, out_dir, dpi=200, figsize=(20, 20)):
     # Make corner plot
     font = {'size' : 6}
 
@@ -333,7 +352,7 @@ def plot_triangle(samples, priors, labels, units, scales, key, out_dir, dpi=500,
     fig.suptitle(key)
     fig = corner.corner(samples * scales, 
                         quantiles=[0.16, 0.5, 0.84], 
-                        range=prior_vals,
+                        # range=prior_vals,
                         labels=[f'{label} ({unit})' for label, unit in zip(labels, units)], 
                         # label_kwargs={'fontsize': 8},
                         show_titles=True,
