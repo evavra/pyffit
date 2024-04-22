@@ -1,12 +1,9 @@
 import numpy as np
 import matplotlib.pyplot as plt
-from grid_utilities import read_grd
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+from pyffit.data import read_grd
 
-# cmap  = 'coolwarm'
-# vlim  = 20
-# count = 0
 
 def main():
     # # Data file
