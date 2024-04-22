@@ -1,8 +1,8 @@
+import time 
 import numba 
 import numpy as np
 from okada_wrapper import dc3dwrapper
 from mpl_toolkits.mplot3d.art3d import LineCollection, Line3DCollection, PolyCollection, Poly3DCollection
-from okada_wrapper import dc3dwrapper
 
 
 # ---------- Classes ----------
@@ -19,10 +19,12 @@ class Fault:
         self.name = name
         self.patches = []
         self.n_patch = 0
-        self.extent = []
+        self.extent  = []
+        self.trace   = Trace()
+        self.strike  = np.nan
 
 
-    def add_patch(self, x, y, z, slip=[0, 0, 0], avg_strike=np.nan):
+    def add_patch(self, x, y, z, slip=[0, 0, 0], avg_strike=np.nan, update_extent=True, update_trace=True):
         """
         Add a fault patch using Cartesian geometry
         """
@@ -32,14 +34,18 @@ class Fault:
         # Reset metadata related to patches
         self.n_patch = len(self.patches)
 
-        patch_extents = np.empty((self.n_patch, 6))
-        for i, patch in enumerate(self.patches):
-            patch_extents[i, :] = patch.extent
+        if update_extent:
+            patch_extents = np.empty((self.n_patch, 6))
+            for i, patch in enumerate(self.patches):
+                patch_extents[i, :] = patch.extent
 
-        self.extent = [patch_extents[:, 0].min(), patch_extents[:, 1].max(), 
-                       patch_extents[:, 2].min(), patch_extents[:, 3].max(),
-                       patch_extents[:, 4].min(), patch_extents[:, 5].max()]
+            self.extent = [patch_extents[:, 0].min(), patch_extents[:, 1].max(), 
+                           patch_extents[:, 2].min(), patch_extents[:, 3].max(),
+                           patch_extents[:, 4].min(), patch_extents[:, 5].max()]
 
+        # Update trace
+        if update_trace:
+            self.get_trace()
 
     def greens_functions(self, x, y, z, alpha, slip_modes=[0, 1, 2], components=[0, 1, 2], uniform_slip=False):
         """
@@ -69,7 +75,6 @@ class Fault:
                 G += patch.greens_functions(x, y, z, alpha, slip_modes=slip_modes, components=components)
         return G
 
-
     def disp(self, x, y, z, alpha, slip='self', components=[0, 1, 2]):
         """
         Calculate displacements at coordinates (x, y, z) due to slip on fault.
@@ -94,14 +99,49 @@ class Fault:
 
         return U
 
-
-    def trace(self):
+    def get_trace(self,):
         """
-        Get projection of fault patch geometry to surface.
+        Extract x/y coordinates of the shallowest fault edge.
         """
 
-        return
+        x = []
+        y = []
+        z = []
 
+        for patch in self.patches:
+            x.extend(patch.x)
+            y.extend(patch.y)
+            z.extend(patch.z)
+
+        x = np.array(x)
+        y = np.array(y)
+        z = np.array(z)
+
+        x = x[z == z.min()]
+        y = y[z == z.min()]
+        z = z[z == z.min()]
+
+        self.trace.x = x
+        self.trace.y = y
+        self.trace.z = z
+
+        return x, y, z
+
+    def get_average_strike(self,):
+        """
+        Extract average fault strike via 1D polynomial fit
+        """
+
+        p = np.polyfit(self.trace.x, self.trace.y, 1)
+
+        return np.rad2deg(np.arctan(1/p[0])) + 180
+
+    def get_length(self,):
+        """
+        Get fault length based on the fault trace
+        """
+
+        return sum([np.sqrt((self.trace.x[i + 1] - self.trace.x[i])**2 + (self.trace.y[i + 1] - self.trace.y[i])**2) for i in range(len(self.trace.x) - 1)]) 
 
 class Patch:
     """
@@ -212,15 +252,18 @@ class Patch:
         self.slip     = slip
 
         # Compute additional attributes
-        x_r = np.array([0, 0, d * np.cos(self.dip_r), d * np.cos(self.dip_r)])
+        x_r = np.array([0, 0, d * np.cos(self.dip_r) * dip/abs(dip), d * np.cos(self.dip_r) * dip/abs(dip)])
         y_r = np.array([l/2, -l/2, -l/2, l/2])
         x, y = rotate(x_r, y_r, -self.strike_r)
+
+
         self.strike_width  = [l/2, -l/2]
         # self.dip_width     = [d, 0]
         self.dip_width     = [-d, 0]
         self.x             = x + origin[0]
         self.y             = y + origin[1] 
-        self.z             = [0, 0, d * np.sin(self.dip_r), d * np.sin(self.dip_r)]
+        # self.z             = [0, 0, d * np.sin(self.dip_r), d * np.sin(self.dip_r)]
+        self.z             = [origin[2], origin[2], origin[2] + d * abs(np.sin(self.dip_r)), origin[2] + d * abs(np.sin(self.dip_r))]
         self.node          = [self.x[0], self.y[0], self.z[0]]
         self.extent        = [np.min(self.x), np.max(self.x),
                               np.min(self.y), np.max(self.y),
@@ -283,10 +326,24 @@ class Patch:
             # Compute displacements due to fault
             # print(alpha, [x_r, y_r, z], self.origin[2], self.dip, self.strike_width, self.dip_width, slip)
             success, u, grad_u = dc3dwrapper(alpha, [x_r, y_r, z], self.origin[2], self.dip, self.strike_width, self.dip_width, slip)
-            assert(success == 0)
+            # assert(success == 0)
             
-            # Rotate displacements from fault coordinates to geographic coordinates
-            u[:2] = rotate(u[0], u[1], np.pi/2 - self.strike_r)
+            # Account for singularities
+            if success!= 0:
+                print('DC3D error: IRET =', success)
+                print(self.x)
+                print(self.y)
+                print(self.z)
+                print(self.strike)
+                print(self.dip)
+                print(self.l)
+                print(self.d)
+
+                u = np.array([-np.inf, -np.inf, -np.inf])
+
+            else:
+                # Rotate displacements from fault coordinates to geographic coordinates
+                u[:2] = rotate(u[0], u[1], np.pi/2 - self.strike_r)
 
             # Export results
             U[i, :] = u[components]
@@ -320,6 +377,22 @@ class Patch:
                 g[n_comp*i:n_comp*(i + 1), j] = self.disp([x[i]], [y[i]], [z[i]], alpha, unit_slip[mode, :], components=components)
 
         return g
+
+
+class Trace:
+    """
+    Surface or uppermost edge of finite fault model
+
+    ATTRIBUTES:
+    x - x-coordinates of trace
+    y - y-coordinates of trace
+    z - z-coordinates of trace
+    """
+
+    def __init__(self):
+        self.x = []
+        self.y = []
+        self.y = []
 
 
 # ---------- Methods ----------
@@ -373,7 +446,7 @@ def make_simple_FFM(fault_dict, avg_strike=np.nan):
     """
 
     # Get information from mapped fault dictionary
-    name    = fault_dict['Name']
+    name    = fault_dict['Name']    
     x       = fault_dict['UTMx']
     y       = fault_dict['UTMy']
     z       = fault_dict['z']
@@ -390,9 +463,9 @@ def make_simple_FFM(fault_dict, avg_strike=np.nan):
 
     for i in range(n_patch):
         # Parse coordinates
-        x_p = [X[i, 0], X[i + 1, 0], X[i + 1, 1], X[i, 1]]
-        y_p = [Y[i, 0], Y[i + 1, 0], Y[i + 1, 1], Y[i, 1]]
-        z_p = [Z[i, 0], Z[i + 1, 0], Z[i + 1, 1], Z[i, 1]]
+        x_p = np.array([X[i, 0], X[i + 1, 0], X[i + 1, 1], X[i, 1]])
+        y_p = np.array([Y[i, 0], Y[i + 1, 0], Y[i + 1, 1], Y[i, 1]])
+        z_p = np.array([Z[i, 0], Z[i + 1, 0], Z[i + 1, 1], Z[i, 1]])
 
         # Add patch to list
         fault.add_patch(x_p, y_p, z_p, slip, avg_strike=avg_strike)
@@ -400,3 +473,108 @@ def make_simple_FFM(fault_dict, avg_strike=np.nan):
     return fault
 
 
+def get_fault_greens_functions(x, y, z, mesh, triangles, nu=0.25, verbose=True):
+    """
+    Compute fault Greens functions for given data coordinates and fault model.
+
+    INPUT:
+
+
+    OUTPUT:
+    GF - array containing Greens functions for each fault element for each data point 
+         Dimensions: N_OBS_PTS, 3 (E/N/Z), N_SRC_TRIS, 3 (srike-slip/dip-slip/opening)
+
+    """
+    # Start timer
+    start = time.time()
+
+    # Prep coordinates and generate Greens functions
+    pts = np.array([x, y, z]).reshape((3, -1)).T.copy() # Convert observation coordinates into row-matrix
+    GF  = HS.disp_matrix(obs_pts=pts, tris=mesh[triangles], nu=nu)    # (N_OBS_PTS, 3, N_SRC_TRIS, 3)
+
+    # Stop timer
+    end = time.time() - start
+
+    # Display info
+    if verbose:
+        saveprint(f'Greens function array size:      {GF.reshape((-1, triangles.size)).shape} {GF.size:.1e} elements')
+        saveprint(f'Greens function computation time: {end:.2f}')
+
+    return GF
+
+
+def get_fault_displacements(x, y, z, mesh, triangles, slip, nu=0.25, verbose=True):
+    """
+    Get surface displacements for given fault mesh and slip distribution.
+    """
+
+    # Start timer
+    start      = time.time()
+
+    # Prepare coordinates
+    pts = np.array([x, y, z]).reshape((3, -1)).T.copy() 
+
+    # Compute displacements
+    disp = HS.disp_free(pts, mesh[triangles], slip, nu)
+
+    # disp_grid  = disp.reshape((*data.shape, 3))
+    # disp_model = np.array([np.dot(disp[i, :], look[i, :]) for i in range(len(disp))]) # project to LOS
+
+    # Stop timer
+    end        = time.time() - start
+
+    if verbose:
+        saveprint(f'Full displacements computation time: {end:.2f}')
+
+    return disp
+
+
+def get_full_disp(data, GF, slip, grid=False):
+    """
+    Compute full displacement field with original NaN values.
+    """
+    # Get nan locations
+    i_nans = np.isnan(data.flatten())
+
+    # Compute displacements
+    disp = GF.dot(slip[:, 0].flatten())
+
+    # Form output array
+    disp_full = np.empty_like(data.flatten())
+    disp_full[i_nans] = np.nan
+    disp_full[~i_nans] = disp
+
+    return disp_full
+
+
+def proj_greens_functions(G, U, verbose=False):
+    """
+    Project fault Greens functions into direction specfied by input vectors.
+        n_iobs  - number of observations
+        n_patch - number of fault patches
+        n_mode  - number of slip modes
+
+    INPUT:
+    G (n_obs, 3, n_patch, n_mode) - array of Greens functions
+    U  (n_obs, 3)                 - array of unit vector components
+
+    OUTPUT:
+    G_proj (n_obs, n_patch, n_mode) - array of LOS Greens functions
+    """ 
+    start = time.time()
+
+    G_proj = np.empty((G.shape[0], G.shape[2], G.shape[3]))
+
+    for i in range(G.shape[0]):
+        for j in range(G.shape[2]):
+            for k in range(G.shape[3]):
+
+                G_proj[i, j, k] = np.dot(G[i, :, j, k], U[i, :])
+    
+    end = time.time() - start
+
+    if verbose:
+        print(f'LOS Greens function array size:      {G_proj.shape} {G_proj.size:.1e} elements')
+        print(f'LOS Greens function computation time: {end:.2f}')
+
+    return G_proj
