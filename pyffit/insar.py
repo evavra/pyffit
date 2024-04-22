@@ -1,4 +1,7 @@
+import numpy as np
 from pyffit.data import read_grd
+from pyffit.utilities import get_local_xy_coords
+from pyffit.quadtree import quadtree_unstructured, apply_unstructured_quadtree
 
 
 def load_look_vectors(look_dir):
@@ -19,7 +22,7 @@ def load_look_vectors(look_dir):
     return np.vstack((look_e.flatten(), look_n.flatten(), look_u.flatten())).T
 
 
-def prepare_insar_datasets(insar_files, look_dirs, weights, ref_point, EPSG='32611', rms_min=0.1, nan_frac_max=0.9, width_min=0.1, width_max=2):
+def prepare_datasets(insar_files, look_dirs, weights, ref_point, EPSG='32611', rms_min=0.1, nan_frac_max=0.9, width_min=0.1, width_max=2):
     """
     Ingest InSAR data for finite fault modeling
 
