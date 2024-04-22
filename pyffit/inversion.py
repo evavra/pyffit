@@ -239,11 +239,11 @@ def reload_hammer(result_file):
 
     # Get samples
     samples       = sampler.get_chain()
-    flat_samples  = sampler.get_chain(discard=discard, thin=thin, flat=True)
+    # flat_samples  = sampler.get_chain(discard=discard, thin=thin, flat=True)
     samp_prob     = sampler.get_log_prob()
 
 
-    return samples, samp_prob, autocorr, discard, thin, flat_samples
+    return samples, samp_prob, autocorr, discard, thin
 
 
 # -------------------------- Utility methods --------------------------
@@ -252,7 +252,7 @@ def config_backend(file_name, n_walkers, n_dim):
     Set up backend for outputting results to HDF5 file.
     """
 
-    backend   = emcee.backends.HDFBackend(file_name)
+    backend = emcee.backends.HDFBackend(file_name)
     backend.reset(n_walkers, n_dim)
 
     return backend
