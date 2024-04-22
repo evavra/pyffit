@@ -1,17 +1,16 @@
-import cmcrameri.cm as cmc
+import corner
+import matplotlib
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+import cmcrameri.cm as cmc
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+import matplotlib.pyplot as plt
+from pyffit.data import read_traces
 from cartopy.io.shapereader import Reader
 from cartopy.feature import ShapelyFeature
-from pyffit.data import read_traces
-from matplotlib.patches import Ellipse
 from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
-from matplotlib import colors
-from matplotlib.patches import Polygon, Rectangle
-import corner
+from matplotlib.patches import Polygon, Rectangle, Ellipse
 
 
 stem       = '/Users/evavra/Projects/Taiwan/ALOS2/A139/F4/'
@@ -164,7 +163,7 @@ def plot_horiz_field(fields, region=[], crs=ccrs.PlateCarree(), features=['land'
             
             # Create colorbar
             cval  = (var - var.min())/(var.max() - var.min()) # Normalized color values
-            cmap  = colors.LinearSegmentedColormap.from_list(cmap_name, plt.get_cmap(cmap_name, 265)(np.linspace(0, 1, 265)), n_seg)
+            cmap  = matplotlib.colors.LinearSegmentedColormap.from_list(cmap_name, plt.get_cmap(cmap_name, 265)(np.linspace(0, 1, 265)), n_seg)
             sm    = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=var.min(), vmax=var.max()))
             c     = cmap(cval)
             cbar  = plt.colorbar(sm, label=cbar_label)
@@ -385,7 +384,7 @@ def plot_fault_3d(mesh, triangles, c=[], edges=False, cmap_name='viridis', cbar_
         ticks = np.linspace(vmin, vmax, n_tick)
         cval  = (cvar - vmin)/(vmax - vmin) # Normalized color values
 
-        cmap  = colors.LinearSegmentedColormap.from_list(cmap_name, plt.get_cmap(cmap_name, 265)(np.linspace(0, 1, 265)), n_seg)
+        cmap  = matplotlib.colors.LinearSegmentedColormap.from_list(cmap_name, plt.get_cmap(cmap_name, 265)(np.linspace(0, 1, 265)), n_seg)
         sm    = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=vmin, vmax=vmax))
         c     = cmap(cval)
 
@@ -484,7 +483,7 @@ def plot_fault_panels(panels, mesh, triangles, slip, figsize=(14, 8.2), cmap_dis
 
     ticks = np.linspace(vmin, vmax, n_tick)
     cval  = (cvar - cvar.min())/(cvar.max() - cvar.min()) # Normalized color values
-    cmap  = colors.LinearSegmentedColormap.from_list(cmap_slip, plt.get_cmap(cmap_slip, 265)(np.linspace(0, 1, 265)), n_seg)
+    cmap  = matplotlib.colors.LinearSegmentedColormap.from_list(cmap_slip, plt.get_cmap(cmap_slip, 265)(np.linspace(0, 1, 265)), n_seg)
     sm    = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=vmin, vmax=vmax))
     c     = cmap(cval)
 
@@ -643,8 +642,8 @@ def plot_quadtree(data, extent, samp_coords, samp_data,
 
     return fig, axes
 
-    
-def plot_chains(samples, samp_prob, discard, labels, units, scales, key, out_dir):
+
+def plot_chains(samples, samp_prob, discard, labels, units, scales, out_dir, dpi=500):
     """
     Plot Markov chains
     """
@@ -671,27 +670,22 @@ def plot_chains(samples, samp_prob, discard, labels, units, scales, key, out_dir
     ax.set_ylabel(r'log(p(m|d))') # log(p(d|m))
     axes[-1].set_xlabel("Step");
     fig.tight_layout()
-    fig.savefig(f'{out_dir}/chains/{key}_chains.png', dpi=dpi)
+    fig.savefig(f'{out_dir}/chains.png', dpi=dpi)
     plt.close()
     
     return
 
 
-def plot_triangle(samples, priors, labels, units, scales, key, out_dir, **kwargs):
+def plot_triangle(samples, priors, labels, units, scales, out_dir, figsize=(10, 10), dpi=500, **kwargs):
     # Make corner plot
-    font = {'size'   : 6}
+    font = {'size': 6}
 
     matplotlib.rc('font', **font)
 
-    if 'figsize' in kwargs.keys():
-        figsize = kwargs['figsize']
-    else:
-        figsize=(6.5, 4)
 
     prior_vals = [[prior * scales[i] for prior in priors[key]] for i, key in enumerate(priors.keys())]
 
     fig = plt.figure(figsize=figsize, tight_layout={'h_pad':0.1, 'w_pad': 0.1})
-    fig.suptitle(key)
     fig = corner.corner(samples * scales, 
                         quantiles=[0.16, 0.5, 0.84], 
                         range=prior_vals,
@@ -704,7 +698,7 @@ def plot_triangle(samples, priors, labels, units, scales, key, out_dir, **kwargs
                         )
 
     # fig.tight_layout(pad=1.5)
-    fig.savefig(f'{out_dir}/triangles/{key}_triangle.png', dpi=dpi)
+    fig.savefig(f'{out_dir}/triangle.png', dpi=dpi)
     plt.close()
     return
 
