@@ -11,6 +11,7 @@ Several other packages you may need to install are:
 - [`numba`](https://numba.pydata.org/): accelerating some basic numerical calculations (i.e. fault model predictions)
 - [`corner`](https://corner.readthedocs.io/en/latest/): plotting MCMC sampling results
 - [`pyproj`](https://pypi.org/project/pyproj/): handling geographic coordinate systems
+- [`cartopy`](https://scitools.org.uk/cartopy/docs/latest/gallery/index.html): handling and plotting geopatial datasets
 
 I would recommend using [Conda](https://conda.io/projects/conda/en/latest/index.html) to create a new Python environment to install and manage these packages. 
 
