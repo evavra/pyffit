@@ -17,3 +17,6 @@ I would recommend using [Conda](https://conda.io/projects/conda/en/latest/index.
 
 
 
+## Example 1: Bayesian inversion for single rectangular dislocation.
+In circumstances where information regarding the geometry and/or orientation of a fault producing a large earthquake are are poorly known it may be useful to perform an inversion for a simplified fault model consisting of a single rectangular (i.e. ``Okada'') dislocation, where the position, dimension, orientation, and slip are simultaneously estimated. In this particular example, I have implemented this procedure using a Markov Chain Monte Carlo (MCMC) algorithm, which allows for uncertainty quantification on the estimated fault parameters. This simplified inversion and resulting parameter estimates may be used as inputs and/or constaints to deriving a more complex finite-fault model to analyze the event's slip distribution.
+
