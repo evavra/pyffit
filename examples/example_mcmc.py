@@ -17,30 +17,22 @@ def main():
 
 def inversion():
     # Files
-    insar_files = [
-                   'synthetic_data_1.grd',
-                   'synthetic_data_2.grd',
+    insar_files = [ # Paths to InSAR datasets
+                   'data/synthetic_data_1.grd',
+                   # 'data/synthetic_data_2.grd',
                    ]
-    look_dirs   = [
-                   '/Users/evavra/Projects/SHF/Data/Sentinel_1',
-                   '/Users/evavra/Projects/SHF/Data/Sentinel_1',
+    look_dirs   = [ # Paths to InSAR look vectors
+                   'data/look',
+                   # 'data/look',
                    ]
-    weights     = [
+    weights     = [ # Relative inversion weights for datasets
                    1, 
-                   1,
+                   # 1,
                    ]
 
     # Geographic parameters
     ref_point   = [-115.929, 33.171] # Cartesian coordinate reference point
     EPSG        = '32611'            # EPSG code for relevant UTM zone
-
-    # # Fault patch parameters
-    # origin = (0, 0, 0)    # x/y/z origin coordinates (km)
-    # strike = 314          # strike angle (deg)
-    # dip    = 70           # dip angle (deg)
-    # l      = 100          # along-strike length (km)
-    # d      = 20           # down dip width (km)
-    # slip   = [-2, 0, 0]    # Slip vector
 
     # Constituitive parameters
     poisson_ratio  = 0.25
@@ -49,22 +41,21 @@ def inversion():
     alpha          = (lmda + shear_modulus) / (lmda + 2 * shear_modulus)    
 
     # Quadtree parameters
-    rms_min      = 0.05  # RMS threshold (data units)
+    rms_min      = 0.1  # RMS threshold (data units)
     nan_frac_max = 0.7  # Fraction of NaN values allowed per cell
     width_min    = 0.1  # Minimum cell width (km)
     width_max    = 4    # Maximum cell width (km)
 
     # Inversion parameters
-    parallel  = True                                # Parallelize sampling (NOTE: may NOT always result in performance increase)
+    parallel  = False                                # Parallelize sampling (NOTE: may NOT always result in performance increase)
     n_process = 8                                    # number of threads to use for parallelization
-    n_walkers = 40                                   # number of walkers in ensemble
+    n_walkers = 40                                   # number of walkers in ensemble (must be at least 2*n + 1 for n free parameters)
     n_step    = 10000                                # number of steps for each walker to take
     moves     = [(emcee.moves.DEMove(), 0.8),        # Choice of walker moves 
                  (emcee.moves.DESnookerMove(), 0.2)] # emcee default is [emcee.moves.StretchMove(), 1.0]
     init_mode = 'uniform'
 
     # Define uniform prior 
-    # prior_mode      = 'uniform' # Type of prior to be used
     out_dir         = 'results'
     inversion_mode  = 'run' # 'run' to run inversion, 'reload' to load previous results and prepare output products
 
@@ -73,14 +64,14 @@ def inversion():
     #       spatial and slip units do not need to be the same.
 
     # Prior limits
-    x_lim           = [-50,  50] # (km) 
-    y_lim           = [-60,  60] # (km)
-    l_lim           = [ 50, 150] # (km)
-    w_lim           = [  5,  20] # (km)
-    strike_lim      = [179.9, 359.9] # (deg)
-    dip_lim         = [  0, 180] # (deg)
-    strike_slip_lim = [  0,   5] # (m)
-    dip_slip_lim    = [  0,   1] # (m)
+    x_lim           = [-50,  50]     # (km) 
+    y_lim           = [-60,  60]     # (km)
+    l_lim           = [ 50, 150]     # (km)
+    w_lim           = [  5,  20]     # (km)
+    strike_lim      = [300, 360] # (deg)
+    dip_lim         = [  30, 150]     # (deg)
+    strike_slip_lim = [  -5,  0]     # (m)
+    dip_slip_lim    = [  -3,  3]     # (m)
 
     # Construct prior
     priors  = {
@@ -96,7 +87,7 @@ def inversion():
 
     labels = ['x',   'y',  'l',  'w', 'strike', 'dip', 'strike_slip', 'dip_slip',] # Labels for plotting                        
     units  = ['km', 'km', 'km', 'km',    'deg', 'deg',           'm',        'm',] # Unit labels for plotting
-    scales = [1e-3, 1e-3, 1e-3, 1e-3,        1,     1,             1,          1,] # Unit scaling factors for plotting
+    scales = [1   , 1   , 1   , 1   ,        1,     1,             1,          1,] # Unit scaling factors for plotting
 
     # Plotting parameters
     vlim_disp = [-1, 1]
@@ -125,6 +116,7 @@ def inversion():
         disp_LOS = pyffit.finite_fault.proj_greens_functions(disp, look)[:, :, 0].reshape(-1)
 
         if -np.inf in disp:
+            print('Error')
             return np.ones_like(disp_LOS) * np.inf * -1
         else:
     
@@ -169,7 +161,6 @@ def inversion():
         """
 
         if -np.inf in G_m:
-            print("ERROREREROROROORRRREEER")
             return -np.inf
 
         else:
@@ -191,7 +182,7 @@ def inversion():
 
     # ---------------------------------- CONFIGURATION ----------------------------------  #
     # Ingest InSAR data for inversion
-    datasets = pyffit.data.prepare_insar_datasets(insar_files, look_dirs, weights, ref_point, 
+    datasets = pyffit.insar.prepare_datasets(insar_files, look_dirs, weights, ref_point, 
                                                   EPSG=EPSG, rms_min=rms_min, nan_frac_max=nan_frac_max, width_min=width_min, width_max=width_max)
 
     # # Plot downsampled data
@@ -213,12 +204,40 @@ def inversion():
     data_std = np.concatenate([datasets[name]['data_samp_std'] for name in datasets.keys()])[~i_nans]
     weights  = np.concatenate([np.ones_like(datasets[name]['data_samp']) * datasets[name]['weight'] for name in datasets.keys()])[~i_nans]
     B        = np.diag(weights)      # Weight matrix
-    S_inv    = np.diag((100*data_std)**-2) # Covariance matrix
+    S_inv    = np.diag((data_std)**-2) # Covariance matrix
 
 
     # ---------------------------------- INVERSION ----------------------------------  #
-    # Choose initial guess (means of priors)
-    m0 = np.array([np.mean(priors[prior]) for prior in priors.keys()])
+    # # Solve for initial state using non-linear least squares
+    # print('Finding starting model...')
+
+    # # Set up helper function for optimization
+    # nll = lambda *args: -cost_function(*args)    
+
+    # # Perform initial optimization for starting model parameters
+    # initial = np.array([np.mean(priors[prior]) for prior in priors.keys()])
+    # m0 = least_squares(nll, initial, args=(coords, look, data, S_inv, patch_slip), 
+    #                    verbose=2,
+    #                    bounds=([priors[prior][0] for prior in priors.keys()], [priors[prior][1] for prior in priors.keys()])).x
+
+    # #           x    y    l     w  strike  dip  strike-slip dip-slip 
+    # m0     = [  0,   0, 100, 12.5,  269.9,  90,        -2.5,     0.5]
+    # m_true = [-10, -10,  80,   15,    317,  70,          -3,       0]
+
+    # # Check initial model...
+    # disp_test = patch_slip(m0, coords, look)
+    # disp_true = patch_slip(m_true, coords, look)
+
+    # fig, axes = plt.subplots(1, 3, figsize=(14, 8.2))
+    # # axes[0].scatter(coords[0], coords[1], c=disp_true[:, 0], cmap='coolwarm',      vmin=vlim_disp[0], vmax=vlim_disp[1])
+    # # axes[1].scatter(coords[0], coords[1], c=disp_true[:, 1], cmap='coolwarm', vmin=vlim_disp[0], vmax=vlim_disp[1])
+    # # axes[2].scatter(coords[0], coords[1], c=disp_true[:, 2], cmap='coolwarm', vmin=vlim_disp[0], vmax=vlim_disp[1])
+    # axes[0].scatter(coords[0], coords[1], c=data, cmap='coolwarm',      vmin=vlim_disp[0], vmax=vlim_disp[1])
+    # axes[1].scatter(coords[0], coords[1], c=disp_test, cmap='coolwarm', vmin=vlim_disp[0], vmax=vlim_disp[1])
+    # axes[2].scatter(coords[0], coords[1], c=disp_true, cmap='coolwarm', vmin=vlim_disp[0], vmax=vlim_disp[1])
+    # plt.show()
+    
+    # return
 
     # Run inversion or reload previous results
     if inversion_mode == 'run':
@@ -228,7 +247,7 @@ def inversion():
         samples, samp_prob, autocorr, discard, thin = pyffit.inversion.run_hammer(log_prob_args, priors, log_prob_uniform, n_walkers, n_step, m0, backend, moves, 
                                                                                   progress=True, init_mode=init_mode, parallel=False, processes=n_process)
     elif inversion_mode == 'reload':
-        result_file = out_dir + f'{out_dir}/results.h5'
+        result_file = f'{out_dir}/results.h5'
         samples, samp_prob, autocorr, discard, thin = pyffit.inversion.reload_hammer(result_file)
 
     # Assess consistence of convergence amongst the ensemble members
