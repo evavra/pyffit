@@ -22,8 +22,14 @@ In circumstances where information regarding the geometry and/or orientation of 
 To demonstrate the inversion, I have created a synthetic example for the case of a (very simple) $M_w$ 7.3 earthquake along the San Jacinto fault system in Southern California. I use a single rectangular disclotion with 3 m of dextral slip to generate surface displacements, which are then projected into the line-of-sight direction (LOS) for Sentinel-1's descending track 173 over the Salton Trough. To generate semi-realistic noise, I introduce observed radar decorrelation from real Sentinel-1 observations (Vavra et al., 2024), simulated rupture decorrelation along the fault trace, and spatially correlated noise to simulate troposphere delays (Emardson et al., 2003) the synthetic LOS data. The noisy data are then down-sampeld using a quadtree algorithm (Jonsson, 2002; Simons, 2002) in order to reduce the computational cost of the inversion. In this example, two realizations of synthetic data (same fault displacements, different troposphere noise) are used since multiple InSAR datasets are often available for inverting. The data are then inverted for a single-patch fault model where the origin coordinates `x` and `y`, fault `strike`, fault `dip`, along-strike length `l`, along-dip width `w`, and `strike_slip` and `dip_slip` amplitudes are estimated. 
 
 ### 1. Synthetic data
+![alt text](https://github.com/evavra/pyffit/blob/main/examples/LOS_clean.png "Synthetic line-of-sight displacements")
+
+![alt text](https://github.com/evavra/pyffit/blob/main/examples/LOS_noisy.png "Synthetic line-of-sight displacements with added noise")
+
 
 ### 2. Quadtree downsampling
+![alt text](https://github.com/evavra/pyffit/blob/main/examples/quadtree_init_synthetic_data_1.png "Downsampled line-of-sight displacements")
+
 
 ### 3. MCMC Results
 
