@@ -215,7 +215,7 @@ def inversion():
     # nll = lambda *args: -cost_function(*args)    
 
     # # Perform initial optimization for starting model parameters
-    # initial = np.array([np.mean(priors[prior]) for prior in priors.keys()])
+    m0 = np.array([np.mean(priors[prior]) for prior in priors.keys()])
     # m0 = least_squares(nll, initial, args=(coords, look, data, S_inv, patch_slip), 
     #                    verbose=2,
     #                    bounds=([priors[prior][0] for prior in priors.keys()], [priors[prior][1] for prior in priors.keys()])).x
