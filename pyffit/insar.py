@@ -61,7 +61,7 @@ def prepare_datasets(insar_files, look_dirs, weights, ref_point, EPSG='32611', r
 
     for i in range(len(insar_files)):
         # Get dataset name
-        dataset = insar_files[i][:-4]
+        dataset = insar_files[i].split('/')[-1][:-4]
 
         # Get dataset weight
         weight  = weights[i]
