@@ -16,6 +16,7 @@ def main():
     return
 
 def inversion():
+    # ---------------------------------- PARAMETERS ----------------------------------
     # Files
     insar_files = [ # Paths to InSAR datasets
                    'data/synthetic_data_1.grd',
@@ -57,7 +58,7 @@ def inversion():
 
     # Define uniform prior 
     out_dir         = 'results'
-    inversion_mode  = 'run' # 'run' to run inversion, 'reload' to load previous results and prepare output products
+    inversion_mode  = 'run' # 'check_downsampling' to only  make quadtree downsampling plots, 'run' to run inversion, 'reload' to load previous results and prepare output products
 
     # NOTE: Data coordinates and fault coordinates should be the same units (km or m) and 
     #       LOS displacement units and slip units should be same units (m, cm, or km), but
@@ -92,7 +93,7 @@ def inversion():
     # Plotting parameters
     vlim_disp = [-1, 1]
 
-
+    # ---------------------------------- SETUP ----------------------------------
     # Define probability functions
     def patch_slip(m, coords, look):
         """
@@ -185,9 +186,13 @@ def inversion():
     datasets = pyffit.insar.prepare_datasets(insar_files, look_dirs, weights, ref_point, 
                                                   EPSG=EPSG, rms_min=rms_min, nan_frac_max=nan_frac_max, width_min=width_min, width_max=width_max)
 
-    # # Plot downsampled data
-    # for dataset in datasets.keys():
-    #     pyffit.figures.plot_quadtree(datasets[dataset]['data'], datasets[dataset]['extent'], (datasets[dataset]['x_samp'], datasets[dataset]['y_samp']), datasets[dataset]['data_samp'], vlim_disp=vlim_disp, file_name=f'quadtree_init_{dataset}.png',)
+    # Plot downsampled data
+    for dataset in datasets.keys():
+        pyffit.figures.plot_quadtree(datasets[dataset]['data'], datasets[dataset]['extent'], (datasets[dataset]['x_samp'], datasets[dataset]['y_samp']), datasets[dataset]['data_samp'], vlim_disp=vlim_disp, file_name=f'quadtree_{dataset}.png',)
+
+    if inversion_mode == 'check_downsampling':
+        # Quit if only checking downsampling parameters
+        return
 
     # Aggregate NaN locations
     i_nans = np.concatenate([datasets[name]['i_nans'] for name in datasets.keys()])
