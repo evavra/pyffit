@@ -1,3 +1,4 @@
+import os
 import time
 import numba
 import emcee
@@ -245,6 +246,66 @@ def reload_hammer(result_file):
 
     return samples, samp_prob, autocorr, discard, thin
 
+
+def mcmc(priors, log_prob, out_dir, m0=[], init_mode='uniform', moves=[emcee.moves.StretchMove(), 1.0], 
+         n_walkers=100, n_step=10000, parallel=False, n_process=8, progress=True, inversion_mode='run'):
+    
+    print(len(priors))
+    print(len(m0))
+    
+    # Get starting model parameters
+    if len(m0) != len(priors):
+        m0 = np.array([np.mean(priors[prior]) for prior in priors.keys()])
+
+    # Run inversion or reload previous results
+    if inversion_mode == 'run':
+        # Set up backend for storing MCMC results
+        backend = config_backend(f'{out_dir}/results.h5', n_walkers, len(priors)) 
+        samples, samp_prob, autocorr, discard, thin = run_hammer((), priors, log_prob, n_walkers, n_step, m0, backend, moves, 
+                                                                                  progress=progress, init_mode=init_mode, parallel=parallel, processes=n_process)
+    elif inversion_mode == 'reload':
+        result_file = f'{out_dir}/results.h5'
+        samples, samp_prob, autocorr, discard, thin = reload_hammer(result_file)
+
+    # Assess consistence of convergence amongst the ensemble members
+    samp_prob[np.abs(samp_prob) == np.inf] = np.nan   # Correct for infinite values
+    mean_chain_prob = np.nanmean(samp_prob, axis=0)   # Get average prob. for each walker
+    std_chain_prob  = np.nanstd(mean_chain_prob)      # Get std of walker means
+    mean_prob       = np.nanmean(samp_prob.flatten()) # Get total average
+    std_prob        = np.nanstd(samp_prob.flatten())  # Get total STD
+
+    # Discard "lost" walkers
+    samples         = samples[:, abs(mean_chain_prob - mean_prob) <= std_prob]   
+    samp_prob       = samp_prob[:, abs(mean_chain_prob - mean_prob) <= std_prob] 
+    flat_samples    = samples[discard::thin, :, :].reshape(len(samples[discard::thin, 0, 0])*len(samples[0, :, 0]), len(samples[0, 0, :]))
+    discard_walkers = n_walkers - samples.shape[1]
+
+    print(f'Average log(p(m|d)) = {mean_prob} +/- {std_prob}')
+    print(f'Chain  log(p(m|d))  = {mean_chain_prob} +/- {std_chain_prob}')
+    print(f'Number of discarded ensemble members = {discard_walkers}')
+    print(f'Number of effective samples = {len(flat_samples)}')
+
+    # Compute mean and standard deviation of flat samples
+    m_avg = np.mean(flat_samples,           axis=0)
+    m_std = np.std(flat_samples,            axis=0)
+    m_q1  = np.quantile(flat_samples, 0.16, axis=0)
+    m_q2  = np.quantile(flat_samples, 0.50, axis=0)
+    m_q3  = np.quantile(flat_samples, 0.84, axis=0)
+
+    print(priors.keys())
+    print(m_avg)
+    print(m_std)
+
+    # # Compute RMSE for representative models
+    # m_rms_avg  = wRMSE(model(m_avg, x), d, S_inv, B)
+    # m_rms_q2   = wRMSE(model(m_q2, x),  d, S_inv, B)
+
+    # Plot Markov chains for each parameter
+    pyffit.figures.plot_chains(samples, samp_prob, discard, labels, units, scales, out_dir)
+
+    # Plot parameter marginals and correlations
+    pyffit.figures.plot_triangle(flat_samples, priors, labels, units, scales, out_dir)    
+    return
 
 # -------------------------- Utility methods --------------------------
 def config_backend(file_name, n_walkers, n_dim):
