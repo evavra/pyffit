@@ -4,15 +4,15 @@ import numpy as np
 
 # Files
 insar_files = [ # Paths to InSAR datasets
-               'data/synthetic_data_1.grd',
+               # 'data/synthetic_data_1.grd',
                'data/synthetic_data_2.grd',
                ]
 look_dirs   = [ # Paths to InSAR look vectors
-               'data/look',
+               # 'data/look',
                'data/look',
                ]
 weights     = [ # Relative inversion weights for datasets
-               1, 
+               # 1, 
                1,
                ]
 
@@ -124,7 +124,7 @@ def patch_slip(m):
     patch.add_self_geometry((x_patch, y_patch, 0), strike, dip, l, w, slip=slip)
 
     # Complute full displacements
-    disp     = patch.disp(x, y, -1e6, alpha, slip=slip).reshape(x.size, 3, 1, 1)
+    disp     = patch.disp(x, y, 0, alpha, slip=slip).reshape(x.size, 3, 1, 1)
     disp_LOS = pyffit.finite_fault.proj_greens_functions(disp, look)[:, :, 0].reshape(-1)
 
     if -np.inf in disp:
@@ -147,13 +147,13 @@ def log_likelihood(G_m):
     OUTPUT
     """
 
-    if (np.inf in np.abs(G_m)):
-        print('inf in G_m')
+    if (np.inf in np.abs(G_m)) | (np.nan in G_m):
+        # print('inf in G_m')
         return -np.inf
 
-    elif np.nan in G_m:
-        print('NaN in G_m')
-        return -np.inf
+    # elif np.nan in G_m:
+    #     # print('NaN in G_m')
+    #     return -np.inf
 
     else:
         r = data - G_m
@@ -162,13 +162,14 @@ def log_likelihood(G_m):
         if np.isnan(likelihood):
             print('WARNING: probability function returned NaN')
 
+            print(f'G_m nan: {np.sum((np.abs(G_m) == np.inf))}')
+            print(f'G_m inf: {np.sum(np.isnan(G_m))}')
             print(f'r nan: {np.sum(np.isnan(r))}')
             print(f'r inf: {np.sum((np.abs(r) == np.inf))}')
             likelihood = -np.inf
 
         return likelihood
 
-# global log_prob_uniform
 def log_prob(m):
     """
     Determine log-probaility of model m using a uniform prior.

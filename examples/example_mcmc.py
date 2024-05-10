@@ -10,7 +10,7 @@ from mpl_toolkits.axes_grid1 import ImageGrid
 from scipy.optimize import least_squares
 from multiprocessing import Pool
 from matplotlib import colors
-from mcmc_setup import priors, labels, units, scales, log_prob
+from example_setup import priors, labels, units, scales, log_prob
 
 
 def main():
@@ -24,11 +24,15 @@ def inversion():
     progress  = True
     parallel  = True                                 # Parallelize sampling (NOTE: may NOT always result in performance increase)
     n_process = 8                                    # number of threads to use for parallelization
-    n_walkers = 20                                   # number of walkers in ensemble (must be at least 2*n + 1 for n free parameters)
+    n_walkers = 50                                   # number of walkers in ensemble (must be at least 2*n + 1 for n free parameters)
     n_step    = 50000                                # number of steps for each walker to take
-    moves     = [(emcee.moves.DEMove(), 0.8),        # Choice of walker moves 
-                 (emcee.moves.DESnookerMove(), 0.2)] # emcee default is [emcee.moves.StretchMove(), 1.0]
-    init_mode = 'uniform'
+    moves     = [
+                 # (emcee.moves.RedBlueMove(), 1.0),        # Choice of walker moves 
+                 (emcee.moves.DEMove(), 0.6),        # Choice of walker moves 
+                 (emcee.moves.DESnookerMove(), 0.4),
+                 # (emcee.moves.StretchMove(), 1.0),
+                ] # emcee default is [emcee.moves.StretchMove(), 1.0]
+    init_mode = 'gaussian'
 
     # Define uniform prior 
     out_dir         = 'results'
@@ -40,6 +44,7 @@ def inversion():
 
     # Get starting model parameters
     m0 = np.array([np.mean(priors[prior]) for prior in priors.keys()])
+    m0 = np.array([12.6, -40.9, 149.8, 5.0, 330.3, 107.9, -2.8, 0.6,])
 
     # Run inversion or reload previous results
     if inversion_mode == 'run':
@@ -59,14 +64,14 @@ def inversion():
     std_prob        = np.nanstd(samp_prob.flatten())  # Get total STD
 
     # Discard "lost" walkers
-    samples         = samples[:, abs(mean_chain_prob - mean_prob) <= std_prob]   
+    # samples         = samples[:, abs(mean_chain_prob - mean_prob) <= std_prob]   
     samp_prob       = samp_prob[:, abs(mean_chain_prob - mean_prob) <= std_prob] 
     flat_samples    = samples[discard::thin, :, :].reshape(len(samples[discard::thin, 0, 0])*len(samples[0, :, 0]), len(samples[0, 0, :]))
-    discard_walkers = n_walkers - samples.shape[1]
+    # discard_walkers = n_walkers - samples.shape[1]
 
     print(f'Average log(p(m|d)) = {mean_prob} +/- {std_prob}')
     print(f'Chain  log(p(m|d))  = {mean_chain_prob} +/- {std_chain_prob}')
-    print(f'Number of discarded ensemble members = {discard_walkers}')
+    # print(f'Number of discarded ensemble members = {discard_walkers}')
     print(f'Number of effective samples = {len(flat_samples)}')
 
     # Compute mean and standard deviation of flat samples
@@ -85,7 +90,7 @@ def inversion():
     # m_rms_q2   = wRMSE(model(m_q2, x),  d, S_inv, B)
 
     # Plot Markov chains for each parameter
-    pyffit.figures.plot_chains(samples, samp_prob, discard, labels, units, scales, out_dir)
+    pyffit.figures.plot_chains(samples, samp_prob, priors, discard, labels, units, scales, out_dir)
 
     # Plot parameter marginals and correlations
     pyffit.figures.plot_triangle(flat_samples, priors, labels, units, scales, out_dir)    
