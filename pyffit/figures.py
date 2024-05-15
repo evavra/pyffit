@@ -643,13 +643,16 @@ def plot_quadtree(data, extent, samp_coords, samp_data,
     return fig, axes
 
 
-def plot_chains(samples, samp_prob, discard, labels, units, scales, out_dir, dpi=500):
+def plot_chains(samples, samp_prob, priors, discard, labels, units, scales, out_dir, figsize=(10, 10), dpi=500):
     """
     Plot Markov chains
     """
+    font = {'size': 6}
     n_dim = len(labels)
+    ylabels = [f'{label} ({unit})' for label, unit in zip(labels, units)]
+    prior_vals = [[prior * scales[i] for prior in priors[key]] for i, key in enumerate(priors.keys())]
 
-    fig, axes = plt.subplots(n_dim + 1, figsize=(6.5, 4), sharex=True)
+    fig, axes = plt.subplots(n_dim + 1, figsize=figsize, sharex=True)
     
     for i in range(n_dim):
         ax = axes[i]
@@ -657,15 +660,16 @@ def plot_chains(samples, samp_prob, discard, labels, units, scales, out_dir, dpi
         # ax.plot(samples[:, :, i] * scales[i], "k", alpha=0.3, linewidth=0.5)
         # ax.plot(samples[:discard, :, i] * scales[i], color='tomato', linewidth=0.5)
         ax.set_xlim(0, len(samples))
-        ax.set_ylabel(labels[i])
-        ax.yaxis.set_label_coords(-0.1, 0.5)
+        # ax.set_ylim(prior_vals[i][0], prior_vals[i][1])
+        ax.set_ylabel(ylabels[i])
+        # ax.yaxis.set_label_coords(-0.1, 0.5)
 
     # Plot log-probability
     ax = axes[n_dim]
     ax.plot(samp_prob[discard:], "k", alpha=0.3, linewidth=0.5) # log(p(d|m))
     # ax.plot(samp_prob, "k", alpha=0.3, linewidth=0.5)
     # ax.plot(samp_prob[:discard], color='tomato', linewidth=0.5)
-    ax.set_xlim(0, len(samples))
+    ax.set_xlim(0, len(samples))  
     ax.yaxis.set_label_coords(-0.1, 0.5)
     ax.set_ylabel(r'log(p(m|d))') # log(p(d|m))
     axes[-1].set_xlabel("Step");
@@ -676,19 +680,19 @@ def plot_chains(samples, samp_prob, discard, labels, units, scales, out_dir, dpi
     return
 
 
-def plot_triangle(samples, priors, labels, units, scales, out_dir, figsize=(10, 10), dpi=500, **kwargs):
+def plot_triangle(samples, priors, labels, units, scales, out_dir, limits=[], figsize=(10, 10), dpi=500, **kwargs):
     # Make corner plot
     font = {'size': 6}
 
     matplotlib.rc('font', **font)
 
-
-    prior_vals = [[prior * scales[i] for prior in priors[key]] for i, key in enumerate(priors.keys())]
+    if len(limits) == 0:
+        limits = [[prior * scales[i] for prior in priors[key]] for i, key in enumerate(priors.keys())]
 
     fig = plt.figure(figsize=figsize, tight_layout={'h_pad':0.1, 'w_pad': 0.1})
     fig = corner.corner(samples * scales, 
                         quantiles=[0.16, 0.5, 0.84], 
-                        range=prior_vals,
+                        range=limits,
                         labels=[f'{label} ({unit})' for label, unit in zip(labels, units)], 
                         label_kwargs={'fontsize': 8},
                         show_titles=True,
