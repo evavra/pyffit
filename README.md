@@ -32,6 +32,6 @@ To demonstrate the inversion, I have created a synthetic example for the case of
 
 
 ### 3. MCMC Results
-
+![alt text](https://github.com/evavra/pyffit/blob/main/examples/triangle.png "Triangle plot")
 
 
