@@ -1,5 +1,11 @@
-More info to come soon...
+## What to expect next (features in the future)
+1. Elliptical deformation: currently the code only generates box-car deformation on a fault patch, which is probably not the most realistic way. In the future, the code will be updated so that the slips will taper out in an elliptical pattern away from the center.
+   
+2. Inversion that isn't based on Quadtree sampling: Quadtree sampling is good at capturing near-field data. But what if the deformation signals are mostly located 'mid-field'? Resolution-based sampling may be useful (the R-based sampling codes will be released separately). The Inversion will support the product of R-based sampling in the future.
 
+3. Iterative sampling: the inversion will support iterative sampling based on the forward modeling of best-fitting models.
+
+4. Sample from the misfits: The inversion will have the option of sampling from the area of large misfits, and adding them back to the original sampled data, which mitigates the misfits cased by insufficient sampling.
 
 ## Requirements and Installation
 In addition to default Python libraries, this code also uses [`matplotlib`](https://matplotlib.org/), [`numpy`](https://numpy.org/), [`pandas`](https://pandas.pydata.org/), [`scipy`](https://scipy.org/) (users familiar with Python will likely already have these installed). The implementations for the rectangular and triangular dislocation elements are from Ben Thompson's [`okada_wrapper`](https://github.com/tbenthompson/okada_wrapper) and [`cutde`](https://github.com/tbenthompson/cutde), respectively.
@@ -15,7 +21,7 @@ Several other packages you may need to install are:
 
 I would recommend using [Conda](https://conda.io/projects/conda/en/latest/index.html) to create a new Python environment to install and manage these packages. 
 
-## How to run the codes
+## How to run the codes? It's very easy!
 
 1. Create a 'result' directory where all the results will be stored.
 2. Go to setup.py (should be at the same level as your mcmc.py and result directory) to configure the input data path, prior limits, steps, number of walkers, path to the output directory ('result'), etc.
@@ -40,5 +46,4 @@ To demonstrate the inversion, I have created a synthetic example for the case of
 
 ### 3. MCMC Results
 ![alt text](https://github.com/evavra/pyffit/blob/main/examples/triangle.png "Triangle plot")
-
 
