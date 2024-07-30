@@ -15,6 +15,13 @@ Several other packages you may need to install are:
 
 I would recommend using [Conda](https://conda.io/projects/conda/en/latest/index.html) to create a new Python environment to install and manage these packages. 
 
+## How to run the codes
+
+1. Create a result directory where all the results will be stored.
+2. Go to setup.py (should be in the same level as your mcmc.py and result directory) to configure the prior limits, steps, number of walkers, path output directory ('result'), etc.
+3. Run the mcmc.py for the inversion.
+4. Run the forward.py for the forward modeling products of your best-fitting parameters. 
+
 
 ## Example A: Bayesian inversion for single rectangular dislocation.
 In circumstances where information regarding the geometry and/or orientation of a fault producing a large earthquake are are poorly known it may be useful to perform an inversion for a simplified fault model consisting of a single rectangular (i.e. ``Okada'') dislocation, where the position, dimension, orientation, and slip are simultaneously estimated. In this particular example, I have implemented this procedure using a Markov Chain Monte Carlo (MCMC) algorithm, which allows for uncertainty quantification on the estimated fault parameters. This simplified inversion and resulting parameter estimates may be used as inputs and/or constaints to deriving a more complex finite-fault model to analyze the event's slip distribution. 
