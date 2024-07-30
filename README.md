@@ -1,4 +1,4 @@
-## What to expect next (features in the future)
+## What to expect next
 1. Elliptical deformation: currently the code only generates box-car deformation on a fault patch, which is probably not the most realistic way. In the future, the code will be updated so that the slips will taper out in an elliptical pattern away from the center.
    
 2. Inversion that isn't based on Quadtree sampling: Quadtree sampling is good at capturing near-field data. But what if the deformation signals are mostly located 'mid-field'? Resolution-based sampling may be useful (the R-based sampling codes will be released separately). The Inversion will support the product of R-based sampling in the future.
