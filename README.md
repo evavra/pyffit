@@ -17,8 +17,8 @@ I would recommend using [Conda](https://conda.io/projects/conda/en/latest/index.
 
 ## How to run the codes
 
-1. Create a result directory where all the results will be stored.
-2. Go to setup.py (should be in the same level as your mcmc.py and result directory) to configure the prior limits, steps, number of walkers, path output directory ('result'), etc.
+1. Create a 'result' directory where all the results will be stored.
+2. Go to setup.py (should be at the same level as your mcmc.py and result directory) to configure the input data path, prior limits, steps, number of walkers, path to the output directory ('result'), etc.
 3. Run the mcmc.py for the inversion.
 4. Run the forward.py for the forward modeling products of your best-fitting parameters. 
 
