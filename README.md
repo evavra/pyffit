@@ -3,7 +3,7 @@
    
 2. Inversion that isn't based on Quadtree sampling: Quadtree sampling is good at capturing near-field data. But what if the deformation signals are mostly located 'mid-field'? Resolution-based sampling may be useful (the R-based sampling codes will be released separately). The Inversion will support the product of R-based sampling in the future.
 
-3. Iterative sampling: the inversion will support iterative sampling based on the forward modeling of best-fitting models.
+3. Iterative sampling: the inversion will support iterative sampling based on the forward modeling of best-fitting parameters.
 
 4. Sample from the misfits: The inversion will have the option of sampling from the area of large misfits, and adding them back to the original sampled data, which mitigates the misfits cased by insufficient sampling.
 
