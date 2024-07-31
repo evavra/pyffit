@@ -5,7 +5,7 @@
 
 3. Iterative sampling: the inversion will support iterative sampling based on the forward modeling of best-fitting parameters.
 
-4. Sample from the misfits: The inversion will have the option of sampling from the area of large misfits, and adding them back to the original sampled data, which mitigates the misfits cased by insufficient sampling.
+4. Sample from the misfits: The inversion will have the option of sampling from the area of large misfits, and adding them back to the original sampled data, which mitigates the misfits caused by insufficient sampling.
 
 ## References
 If using the codes, please cite the paper: Vavra, E. J., Qiu, H., Chi, B., Share, P.-E., Allam, A., Morzfeld, M., et al. (2023). Active dipping interface of the Southern San Andreas fault revealed by space geodetic and seismic imaging. Journal of Geophysical Research: Solid Earth, 128, e2023JB026811. https://doi.org/10.1029/2023JB026811 and this GitHub repository if possible.
