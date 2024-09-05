@@ -1,4 +1,6 @@
 import os
+import glob
+import datetime as dt
 import numpy as np
 import xarray as xr
 import pandas as pd
@@ -298,3 +300,74 @@ def read_Slab2_faults(file):
     mesh = np.array(rows)
     # print(mesh)
     return mesh
+
+
+def get_data_paths(data_dir, file_format='*.grd'):
+    """
+    Get list of files in data_dir to ingest based on wildcard file_format
+    """
+    return np.sort(glob.glob(f'{data_dir}/{file_format}'))
+
+
+def get_dates_from_files(files, index_range, return_datetime=True):
+    """
+    Extract scene dates from list of files given range of indices in filenames
+    """
+
+    # Get dates
+    dates = [file.split('/')[-1][index_range[0]:index_range[1]] for file in files]
+
+    # Return as Datetime objects if specified, otherwise just strings
+    if return_datetime:
+        return [dt.datetime.strptime(date, '%Y%m%d') for date in dates]
+    else:
+        return [f'{date[:4]}-{date[4:6]}-{date[6:]}' for date in dates]
+ 
+
+def read_insar_dataset(data_dir, file_format, xkey='lon', ykey='lat', check_lon=False, date_index_range=[]):
+    """
+    Read set of NetCDF files from a directory based on specified wildcard
+    Example: /Users/evavra/Projects/SSAF/Data/InSAR/S1/timeseries/asc + ts_*_unfilt_ll.grd
+    """
+
+    # Load files
+    files   = get_data_paths(data_dir, file_format=file_format)
+    dataset = xr.open_mfdataset(files, combine='nested', concat_dim='date')
+
+    # Check format of longitude coordinates
+    if check_lon & (all(np.abs(0 <= dataset[xkey]) <= 360)):
+        dataset = dataset.assign_coords(lon=(xkey, dataset[xkey].data - 360))
+
+    # Add date dimension if specified
+    if len(date_index_range) == 2:
+        dates   = get_dates_from_files(files, date_index_range)
+        dataset = dataset.assign_coords(date=('date', dates))
+
+    return dataset
+
+
+def read_look_vectors(look_dir, filenames=['look_e.grd', 'look_n.grd', 'look_u.grd'], flatten=False):
+    """
+    Read east/north/up look vectors to array.
+    """    
+    _, _, look_e = read_grd(f'{look_dir}/{filenames[0]}')
+    _, _, look_n = read_grd(f'{look_dir}/{filenames[1]}')
+    _, _, look_u = read_grd(f'{look_dir}/{filenames[2]}')
+
+    if flatten:
+        return np.vstack((look_e.flatten(), look_n.flatten(), look_u.flatten())).T   
+    else:
+        return np.stack((look_e, look_n, look_u), axis=-1)
+
+
+def modify_hdf5(file, key, data):
+    """
+    Update or create a dataset in an HDF5 file.
+    """
+    
+    if key in file:
+        del file[key]
+    
+    file.create_dataset(key, data=data)
+
+    return file
