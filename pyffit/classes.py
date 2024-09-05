@@ -80,126 +80,93 @@ class Interferogram:
             setattr(self, key, kwargs[key])
 
 
-    def load_data(self, files=[], verbose=True):
-        """
-        Attempt to load interferogram attributes.
-        If files do not exist, attribute value will remain None.
-        Non-default files may be speficied with files argument.
-        """
+    # def load_data(self, files=[], verbose=True):
+    #     """
+    #     Attempt to load interferogram attributes.
+    #     If files do not exist, attribute value will remain None.
+    #     Non-default files may be speficied with files argument.
+    #     """
 
-        for data_type in files:
-            try:
-                file_path = f'{self.path}/{data_type}.grd'
+    #     for data_type in files:
+    #         try:
+    #             file_path = f'{self.path}/{data_type}.grd'
 
-                with xr.open_dataset(file_path) as grd:
-                    try:
-                        # Try geographic coordinates
-                        x = grd.lon.values
-                        y = grd.lat.values
-                        z = grd.z.values
+    #             with xr.open_dataset(file_path) as grd:
+    #                 try:
+    #                     # Try geographic coordinates
+    #                     x = grd.lon.values
+    #                     y = grd.lat.values
+    #                     z = grd.z.values
 
-                        # Set spatial attributes
-                        self.lon       = x
-                        self.lat       = y
-                        self.xmin_ll   = np.nanmin(x)
-                        self.xmax_ll   = np.nanmax(x)
-                        self.ymin_ll   = np.nanmin(y)
-                        self.ymax_ll   = np.nanmax(y)
-                        self.xlim_ll   = (self.xmin_ll, self.xmax_ll)
-                        self.ylim_ll   = (self.ymin_ll, self.ymax_ll)
-                        self.dims_ll   = z.shape
+    #                     # Set spatial attributes
+    #                     self.lon       = x
+    #                     self.lat       = y
+    #                     self.xmin_ll   = np.nanmin(x)
+    #                     self.xmax_ll   = np.nanmax(x)
+    #                     self.ymin_ll   = np.nanmin(y)
+    #                     self.ymax_ll   = np.nanmax(y)
+    #                     self.xlim_ll   = (self.xmin_ll, self.xmax_ll)
+    #                     self.ylim_ll   = (self.ymin_ll, self.ymax_ll)
+    #                     self.dims_ll   = z.shape
                         
-                        if self.track == 'D':
-                            self.extent_ll = [self.xmin_ll,
-                                           self.xmax_ll,
-                                           self.ymin_ll,
-                                           self.ymax_ll,]
-                        else:
-                            self.extent_ll = [self.xmin_ll,
-                                           self.xmax_ll,
-                                           self.ymax_ll,
-                                           self.ymin_ll,]
-                        self.region_ll = self.extent_ll
+    #                     if self.track == 'D':
+    #                         self.extent_ll = [self.xmin_ll,
+    #                                        self.xmax_ll,
+    #                                        self.ymin_ll,
+    #                                        self.ymax_ll,]
+    #                     else:
+    #                         self.extent_ll = [self.xmin_ll,
+    #                                        self.xmax_ll,
+    #                                        self.ymax_ll,
+    #                                        self.ymin_ll,]
+    #                     self.region_ll = self.extent_ll
 
-                    except AttributeError:
-                        # Try radar coordinates
-                        x = grd.x.values
-                        y = grd.y.values
-                        z = grd.z.values
+    #                 except AttributeError:
+    #                     # Try radar coordinates
+    #                     x = grd.x.values
+    #                     y = grd.y.values
+    #                     z = grd.z.values
 
-                        # Set spatial attributes
-                        self.rng      = x
-                        self.azi      = y
-                        self.xmin_ra   = np.nanmin(x)
-                        self.xmax_ra   = np.nanmax(x)
-                        self.ymin_ra   = np.nanmin(y)
-                        self.ymax_ra   = np.nanmax(y)
-                        self.xlim_ra   = (self.xmin_ra, self.xmax_ra)
-                        self.ylim_ra   = (self.ymin_ra, self.ymax_ra)
-                        self.dims_ra   = z.shape
+    #                     # Set spatial attributes
+    #                     self.rng      = x
+    #                     self.azi      = y
+    #                     self.xmin_ra   = np.nanmin(x)
+    #                     self.xmax_ra   = np.nanmax(x)
+    #                     self.ymin_ra   = np.nanmin(y)
+    #                     self.ymax_ra   = np.nanmax(y)
+    #                     self.xlim_ra   = (self.xmin_ra, self.xmax_ra)
+    #                     self.ylim_ra   = (self.ymin_ra, self.ymax_ra)
+    #                     self.dims_ra   = z.shape
                         
-                        if self.track == 'D':
-                            self.extent_ra = [self.xmin_ra,
-                                           self.xmax_ra,
-                                           self.ymin_ra,
-                                           self.ymax_ra,]
-                        else:
-                            self.extent_ra = [self.xmin_ra,
-                                           self.xmax_ra,
-                                           self.ymax_ra,
-                                           self.ymin_ra,]
-                        self.region_ra = self.extent_ra
-
-                # Set data values
-                self.data[data_type] = z
-
-            except ValueError:
-                if verbose:
-                    print(f'Warning: {file_path} not found')
-        
-        return
+    #                     if self.track == 'D':
+    #                         self.extent_ra = [self.xmin_ra,
+    #                                        self.xmax_ra,
+    #                                        self.ymin_ra,
+    #                                        self.ymax_ra,]
+                        # else:
 
 
-    def load_temporal_info(self,):
-        """
-        Extract datetime info from path.
-        """
-
-        # Date pair (directory name)
-        self.date_pair   = self.path.split('/')[-1]
-
-        # Datetime objects for dates
-        self.dates = [dt.datetime.strptime(date, '%Y%m%d') for date in self.date_pair.split('_')]
-
-        # Epoch length
-        self.days = (self.dates[1] - self.dates[0]).days
-
-        return
 
 
-    def load_track(self, verbose=True):
-        """
-        Attempt to identify satellite orbital track from filepath.
-        """
+class Quadtree:
+    """
+    Class to contain attributes of quadtree downsampled dataset
+    
+    ATTRIBUTES:
+    x, y (k,)     - downsampled coordinates
+    data (k,)     - downsamled data values
+    std (k,)      - downsampled data standard deviations
+    dims (k,)     - dimensions of each cell in x/y units.
+    extents (k,)  - extent of each cell in x/y coordinates.
+    nan_frac (k,) - fraction of nan values in each cell.
+    """
 
-        # Possible split directory strings, which track directory could be above
-        splits = ['F1', 'F2', 'F3', 'F4', 'F5', 'merge']
-
-        for split in splits:
-            track_strs = self.path.split(split) #[0].split('/')[-4]
-
-            if len(track_strs) > 1:
-                track = track_strs[0].split('/')[-2]
-
-                if any(key in track for key in ['A', 'ASC', ]):
-                    self.track = 'A'
-                    return
-
-                elif any(key in track for key in ['D', 'DES', ]):
-                    self.track = 'D'
-                    return
-
-                else:
-                    print('No satellite track identified.')
-                    return
-        return
+    def __init__(self, x, y, data, std, tree, dims, extents, nan_frac):
+        self.x        = x  
+        self.y        = y  
+        self.data     = data  
+        self.std      = std  
+        self.tree     = tree  
+        self.dims     = dims  
+        self.extents  = extents  
+        self.nan_frac = nan_frac  
