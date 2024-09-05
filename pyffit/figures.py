@@ -11,6 +11,7 @@ from cartopy.io.shapereader import Reader
 from cartopy.feature import ShapelyFeature
 from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 from matplotlib.patches import Polygon, Rectangle, Ellipse
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 
 stem       = '/Users/evavra/Projects/Taiwan/ALOS2/A139/F4/'
@@ -293,16 +294,16 @@ def add_error_ellipses(ax, quiv, sigma_x, sigma_y, crs, scale, alpha=1, color='C
     return ax
 
 
-def plot_grid_map(data, extent, region=[], fig_ax=(), projection=ccrs.PlateCarree(), vlim=[], x_tick_inc=0, y_tick_inc=0, 
-                  cmap='coolwarm', cbar_label='', title='',
-                  dpi=500, show=False, file_name='', cbar=False):
+def plot_grid_map(data, extent, region=[], fig_ax=(), land=False, lakes=False, map_projection=ccrs.PlateCarree(), data_projection=ccrs.PlateCarree(), vlim=[], 
+                  x_tick_inc=0, y_tick_inc=0, cmap='coolwarm', figsize=(14, 8.2), cbar_label='', title='',
+                  dpi=300, show=False, filename='', cbar=False):
     """
     Make map of gridded data.
     """
 
     if len(fig_ax) == 0:
-        fig = plt.figure(figsize=(14, 8.2))
-        ax  = fig.add_subplot(1, 1, 1, projection=projection)
+        fig = plt.figure(figsize=figsize)
+        ax  = fig.add_subplot(1, 1, 1, projection=map_projection)
     else:
         fig, ax = fig_ax
 
@@ -313,11 +314,13 @@ def plot_grid_map(data, extent, region=[], fig_ax=(), projection=ccrs.PlateCarre
         ax.set_title(title)
 
     # Plot features
-    ax.add_feature(cfeature.LAND.with_scale('10m'), color='white')
-    ax.add_feature(cfeature.LAKES.with_scale('10m'))
+    if land != False:
+        ax.add_feature(cfeature.LAND.with_scale('10m'), color=land)
+    if lakes != False:
+        ax.add_feature(cfeature.LAKES.with_scale('10m'), color=lakes)
 
     # Plot data
-    im = ax.imshow(data, extent=extent, transform=projection, cmap=cmap, interpolation='none', vmin=vlim[0], vmax=vlim[1])
+    im = ax.imshow(data, extent=extent, transform=data_projection, cmap=cmap, interpolation='none', vmin=vlim[0], vmax=vlim[1])
         
     # Fault stuff
     # ax.plot(faults[:, 0], faults[:, 1],               c='gray',    linewidth=1, transform=projection,)
@@ -328,28 +331,68 @@ def plot_grid_map(data, extent, region=[], fig_ax=(), projection=ccrs.PlateCarre
     # Axes settings
     ax.set_xlabel('Longitude')
     ax.set_ylabel('Latitude')
-    
+    ax.set_aspect(1)
+
+
     if len(region) > 0:
         ax.set_xlim(region[:2])
         ax.set_ylim(region[2:])
 
         if x_tick_inc > 0:        
-            ax.set_xticks(np.arange(region[0], region[1] + x_tick_inc, x_tick_inc))
+            # ax.set_xticks(np.arange(region[0], region[1] + x_tick_inc, x_tick_inc))
+            xticks = np.arange(np.ceil(region[0]/x_tick_inc)*x_tick_inc, np.floor(region[1]/x_tick_inc)*x_tick_inc + x_tick_inc, x_tick_inc)
+            ax.set_xticks(xticks,)
 
         if y_tick_inc > 0:
-            ax.set_yticks(np.arange(region[2], region[3] + y_tick_inc, y_tick_inc))
+            # ax.set_yticks(np.arange(region[2], region[3] + y_tick_inc, y_tick_inc))
+            yticks = np.arange(np.ceil(region[2]/y_tick_inc)*y_tick_inc, np.floor(region[3]/y_tick_inc)*y_tick_inc, y_tick_inc)
+            ax.set_yticks(yticks,)
 
+    # fig.tight_layout()
+    # plt.subplots_adjust(left=0.1, bottom=-0.1, right=0.9, top=1.4, wspace=None, hspace=None)
 
     if len(cbar_label) > 0:    
-        fig.colorbar(im, ax=ax, label=cbar_label, orientation='horizontal', pad=0.05)
+        fig.colorbar(im, ax=ax, label=cbar_label, orientation='horizontal', shrink=0.5, pad=0.05)
 
-    if len(file_name) > 0:
-        fig.savefig(file_name, dpi=dpi)
+    if len(filename) > 0:
+        fig.savefig(filename, dpi=dpi)
+
     
     if show:
         plt.show()
+    plt.clf()
+    return fig, ax
 
 
+def plot_oblique_mercator(grid):
+
+
+    # Define the center of your plot
+    center_lon = -116
+    center_lat = 33
+
+    # Define the azimuth for NW-SE orientation (around 135 degrees)
+    azimuth = 135
+
+    # Set up the Oblique Mercator projection
+    projection = ccrs.ObliqueMercator(central_longitude=center_lon,
+                                      central_latitude=center_lat,
+                                      azimuthal_angle=azimuth)
+
+    # Create a figure and axis with the Oblique Mercator projection
+    fig, ax = plt.subplots(figsize=(10, 10), subplot_kw={'projection': projection})
+
+    # Add geographical features (optional)
+    ax.add_feature(cfeature.LAND, edgecolor='black')
+    ax.add_feature(cfeature.COASTLINE)
+    ax.add_feature(cfeature.BORDERS)
+
+    # Set extent around the center point (you may adjust these values as needed)
+    ax.set_extent([center_lon - 5, center_lon + 5, center_lat - 5, center_lat + 5], crs=ccrs.PlateCarree())
+
+    # Plot your data (e.g., scatter points, lines, etc.) here
+
+    plt.show()
     return
 
 
@@ -389,8 +432,8 @@ def plot_fault_3d(mesh, triangles, c=[], edges=False, cmap_name='viridis', cbar_
         c     = cmap(cval)
 
         # Add colorbar
-        cbar  = plt.colorbar(sm, label=cbar_label, **cbar_kwargs,)
-        cbar.set_ticks(ticks)
+        # cbar  = fig.colorbar(sm, label=cbar_label, **cbar_kwargs,)
+        # cbar.set_ticks(ticks)
 
         for tri, c0 in zip(triangles, c):
             coords = mesh[tri]
@@ -442,8 +485,8 @@ def plot_fault_3d(mesh, triangles, c=[], edges=False, cmap_name='viridis', cbar_
     return fig, ax
 
 
-def plot_fault_panels(panels, mesh, triangles, slip, figsize=(14, 8.2), cmap_disp='coolwarm', cmap_slip='viridis', x_ax='east',
-                      trace=False, vlim_disp=[], vlim_slip=[], xlim=[], ylim=[], markersize=10, n_tick=11, n_seg=10, mu=0, eta=0, file_name='', show=False, dpi=300):
+def plot_fault_panels(panels, mesh, triangles, slip, figsize=(14, 8.2), cmap_disp='coolwarm', cmap_slip='viridis', x_ax='east', title='',
+                      trace=False, vlim_disp=[], vlim_slip=[], xlim=[], ylim=[], markersize=10, n_tick=11, n_seg=10, mu=0, eta=0, filename='', show=False, dpi=300):
     """
     Plot three displacement panels above side-view of fault model.
     """
@@ -461,6 +504,9 @@ def plot_fault_panels(panels, mesh, triangles, slip, figsize=(14, 8.2), cmap_dis
     cax1  = fig.add_subplot(gs[1, -1])
     axes  = [ax0, ax1, ax2, ax3]
     caxes = [cax0, cax1]
+
+    if len(title) > 0:
+        fig.suptitle(title)
 
     # Set up colorbar for fault slip
     alpha = 1
@@ -511,8 +557,8 @@ def plot_fault_panels(panels, mesh, triangles, slip, figsize=(14, 8.2), cmap_dis
             x = panel['x']
             y = panel['y']
 
-            all_x.extend([x.min(), x.max()])
-            all_y.extend([y.min(), y.max()])
+            all_x.extend([np.nanmin(x), np.nanmax(x)])
+            all_y.extend([np.nanmin(y), np.nanmax(y)])
 
             im = axes[i].scatter(x, y, c=data, vmin=vlim_disp[0], vmax=vlim_disp[1], cmap=cmap_disp, marker='.', s=markersize)
             axes[i].set_aspect('equal')
@@ -561,8 +607,8 @@ def plot_fault_panels(panels, mesh, triangles, slip, figsize=(14, 8.2), cmap_dis
     fig.colorbar(sm, cax=cax1, label='Slip (mm)')
     fig.tight_layout()
 
-    if len(file_name) > 0:
-        fig.savefig(file_name, dpi=dpi)
+    if len(filename) > 0:
+        fig.savefig(filename, dpi=dpi)
         
     if show:
         plt.show()
@@ -575,7 +621,7 @@ def plot_fault_panels(panels, mesh, triangles, slip, figsize=(14, 8.2), cmap_dis
 def plot_quadtree(data, extent, samp_coords, samp_data, 
                   trace=[], original_data=[], cell_extents=[], 
                   cmap_disp='coolwarm', vlim_disp=[], figsize=(14, 8.2), 
-                  markersize=30, file_name='', show=False, dpi=300):
+                  markersize=30, filename='', show=False, dpi=300):
     """
     Compare gridded and quadtree downsampled displacements
     """
@@ -632,8 +678,8 @@ def plot_quadtree(data, extent, samp_coords, samp_data,
 
     fig.colorbar(im, cax=cax, label='LOS Displacement (mm)', shrink=0.3)
 
-    if len(file_name) > 0:
-        fig.savefig(file_name, dpi=dpi)
+    if len(filename) > 0:
+        fig.savefig(filename, dpi=dpi)
 
     if show:
         plt.show()
@@ -706,3 +752,93 @@ def plot_triangle(samples, priors, labels, units, scales, out_dir, limits=[], fi
     plt.close()
     return
 
+
+def plot_grid(x, y, grid, filename='', show=False, cmap='coolwarm', vlim=[], fig_ax=[], extent=[], figsize=(7, 6), cbar=False, xlabel='X', ylabel='Y', clabel='Displacement (mm)', dpi=300):
+    """
+    Plot     
+    """
+
+    if len(fig_ax) == 2:
+        fig, ax = fig_ax
+    else:
+        fig, ax = plt.subplots(figsize=figsize)
+        
+    if len(vlim) != 2:
+        vlim = [np.nanmin(grid), np.nanmax(grid)]
+
+    if len(extent) != 4:
+        extent = [x.min(), x.max(), y.max(), y.min()]
+
+    im = ax.imshow(grid, extent=extent, cmap=cmap, vmin=vlim[0], vmax=vlim[1], interpolation='none')
+
+    ax.set_xlim(extent[0], extent[1])
+    ax.set_ylim(extent[3], extent[2])
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_aspect(1)
+
+    if cbar:
+        plt.colorbar(im, label=clabel, pad=0.4)
+
+
+    if len(filename) > 0:
+        plt.savefig(filename, dpi=dpi)
+    
+    if show:
+        plt.show()
+            
+    return fig, ax
+
+
+def plot_grids_row(grids, extent, cmap=cmc.vik, region=[], titles=[], labels=[], vlims=[], figsize=(14, 8.2), xlabel='Longitude', ylabel='Latitude', cax_kwargs=dict(size="5%", pad=0.5), show=False, filename='', dpi=300):
+    """
+    Plot row of grids
+    """
+    n_grid = len(grids)
+
+    # Get color limits
+    if len(vlims) != n_grid:
+        vlims = [[np.min([np.nanmin(grid) for grid in grids]), np.max([np.nanmax(grid) for grid in grids])] for i in range(len(grids))]
+
+    if len(labels) != n_grid:
+        labels = ['' for i in range(n_grid)]
+
+    # Plot
+    fig, axes = plt.subplots(1, n_grid, figsize=figsize)
+
+    for i, ax in enumerate(axes):
+        # Plot grid
+        im = ax.imshow(grids[i], cmap=cmap, extent=extent, interpolation='none', vmin=vlims[i][0], vmax=vlims[i][1])
+
+        # Colorbar
+        divider = make_axes_locatable(ax)
+        cax     = divider.append_axes("bottom", **cax_kwargs)
+        cbar    = fig.colorbar(im, cax=cax, orientation="horizontal", label=labels[i])
+
+        # Axes settings
+        axes[i].invert_yaxis()
+        axes[i].set_xlabel(xlabel)
+        axes[i].set_aspect(1)
+
+        if len(titles) == n_grid:
+                axes[i].set_title(titles[i])
+
+        if len(region) == 4:
+            axes[i].set_xlim(region[:2])
+            axes[i].set_ylim(region[2:])
+
+    # More axes settings
+    axes[0].set_xlabel(ylabel)
+
+    for ax in axes[1:]:
+        ax.set_yticks([])
+
+    fig.tight_layout()
+
+    if show:
+        plt.show()
+
+    if len(filename) > 0:
+        plt.savefig(filename, dpi=dpi)
+
+    return fig, axes
