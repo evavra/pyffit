@@ -22,7 +22,7 @@ def fit_ramp(x, y, z, x_ramp=[], y_ramp=[], deg=1, region=[-360, 360, -90, 90], 
     # Handle coordinates    
     if (x.shape == z.shape) & (y.shape == z.shape) & (len(z.shape) == 1): # Pre-flattened
         pass
-    elif (x.shape == y.shape) & (len(x.shape) == 2): # Fully gridded 
+    elif (x.shape == y.shape) & (len(x.shape) == 2): # Fully gridded
         x = x.flatten()
         y = y.flatten()
     elif (x.shape != y.shape) & len(x.shape) == 1: # Grid axes only
@@ -33,6 +33,7 @@ def fit_ramp(x, y, z, x_ramp=[], y_ramp=[], deg=1, region=[-360, 360, -90, 90], 
         print('Warning! Coordinates do not match')
         print(f'x: {x.shape}')
         print(f'y: {y.shape}')
+        
         print(f'z: {z.shape}')
 
     d = z.flatten()
@@ -61,9 +62,10 @@ def fit_ramp(x, y, z, x_ramp=[], y_ramp=[], deg=1, region=[-360, 360, -90, 90], 
     # Get design matrices
     G_fit  = get_G(x, y)
     G_ramp = get_G(x_ramp, y_ramp)
-
+    
     # Omit nans for least-squares solve
-    nans = np.isnan(d)
+    nans = np.isnan(z.flatten())
+
     G    = G_fit[(~nans) & region_mask, :]
     d    = d[(~nans) & region_mask]
     # print(f'Percent NaN: {100*sum(nans)/len(nans):.1f} %')
