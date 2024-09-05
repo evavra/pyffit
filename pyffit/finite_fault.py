@@ -1,8 +1,8 @@
 import time 
 import numba 
 import numpy as np
-from okada_wrapper import dc3dwrapper
-from mpl_toolkits.mplot3d.art3d import LineCollection, Line3DCollection, PolyCollection, Poly3DCollection
+# from okada_wrapper
+import cutde.halfspace as HS
 
 
 # ---------- Classes ----------
@@ -22,7 +22,6 @@ class Fault:
         self.extent  = []
         self.trace   = Trace()
         self.strike  = np.nan
-
 
     def add_patch(self, x, y, z, slip=[0, 0, 0], avg_strike=np.nan, update_extent=True, update_trace=True):
         """
@@ -142,6 +141,7 @@ class Fault:
         """
 
         return sum([np.sqrt((self.trace.x[i + 1] - self.trace.x[i])**2 + (self.trace.y[i + 1] - self.trace.y[i])**2) for i in range(len(self.trace.x) - 1)]) 
+
 
 class Patch:
     """
@@ -324,20 +324,19 @@ class Patch:
             # print(alpha, [x_r, y_r, z], self.origin[2], self.dip, self.strike_width, self.dip_width, slip)
 
             # Compute displacements due to fault
-            # print(alpha, [x_r, y_r, z], self.origin[2], self.dip, self.strike_width, self.dip_width, slip)
             success, u, grad_u = dc3dwrapper(alpha, [x_r, y_r, z], self.origin[2], self.dip, self.strike_width, self.dip_width, slip)
             # assert(success == 0)
             
             # Account for singularities
-            if success!= 0:
-                print('DC3D error: IRET =', success)
-                print(self.x)
-                print(self.y)
-                print(self.z)
-                print(self.strike)
-                print(self.dip)
-                print(self.l)
-                print(self.d)
+            if success != 0:
+                print('\n DC3D error: IRET =', success)
+                # print(self.x)
+                # print(self.y)
+                # print(self.z)
+                # print(self.strike)
+                # print(self.dip)
+                # print(self.l)
+                # print(self.d)
 
                 u = np.array([-np.inf, -np.inf, -np.inf])
 
@@ -490,20 +489,20 @@ def get_fault_greens_functions(x, y, z, mesh, triangles, nu=0.25, verbose=True):
 
     # Prep coordinates and generate Greens functions
     pts = np.array([x, y, z]).reshape((3, -1)).T.copy() # Convert observation coordinates into row-matrix
-    GF  = HS.disp_matrix(obs_pts=pts, tris=mesh[triangles], nu=nu)    # (N_OBS_PTS, 3, N_SRC_TRIS, 3)
+    GF  = HS.disp_matrix(obs_pts=pts, tris=mesh[triangles], nu=nu) # (N_OBS_PTS, 3, N_SRC_TRIS, 3)
 
     # Stop timer
     end = time.time() - start
 
     # Display info
     if verbose:
-        saveprint(f'Greens function array size:      {GF.reshape((-1, triangles.size)).shape} {GF.size:.1e} elements')
-        saveprint(f'Greens function computation time: {end:.2f}')
+        print(f'Greens function array size:      {GF.reshape((-1, triangles.size)).shape} {GF.size:.1e} elements')
+        print(f'Greens function computation time: {end:.2f}')
 
     return GF
 
 
-def get_fault_displacements(x, y, z, mesh, triangles, slip, nu=0.25, verbose=True):
+def get_fault_displacements(x, y, z, mesh, triangles, slip, nu=0.25, verbose=False):
     """
     Get surface displacements for given fault mesh and slip distribution.
     """
@@ -524,7 +523,8 @@ def get_fault_displacements(x, y, z, mesh, triangles, slip, nu=0.25, verbose=Tru
     end        = time.time() - start
 
     if verbose:
-        saveprint(f'Full displacements computation time: {end:.2f}')
+        # print(f'Full displacements computation time: {end:.2f}')
+        print(f'Full displacements computation time: {end:.2f}')
 
     return disp
 
@@ -533,6 +533,7 @@ def get_full_disp(data, GF, slip, grid=False):
     """
     Compute full displacement field with original NaN values.
     """
+    
     # Get nan locations
     i_nans = np.isnan(data.flatten())
 
@@ -550,7 +551,7 @@ def get_full_disp(data, GF, slip, grid=False):
 def proj_greens_functions(G, U, verbose=False):
     """
     Project fault Greens functions into direction specfied by input vectors.
-        n_iobs  - number of observations
+        n_obs  - number of observations
         n_patch - number of fault patches
         n_mode  - number of slip modes
 
@@ -578,3 +579,46 @@ def proj_greens_functions(G, U, verbose=False):
         print(f'LOS Greens function computation time: {end:.2f}')
 
     return G_proj
+
+
+def get_fault_info(mesh, triangles, verbose=True):
+    """
+    Get information about fault mesh construction.
+
+    INPUT:
+    mesh (m, 3)       - x/y/z coordinates of mesh vertices
+    triangles (mn, 3) - indicies of vertices for each nth triangular element
+
+    OUTPUT:
+    fault_info - dictionary containing the folowing attributes:
+                n_vertex          - number of vertices
+                n_patch           - number of patches
+                depths            - depths of each layer
+                layer_thicknesses - thicknesses of each layer
+                trace             - x/y/z/ coordinates of fault surface trace
+                n_top_patch       - number of surface patches
+                l_top_patch       - along-strike length of surface patches
+    """
+
+    n_vertex = len(mesh)
+    n_patch  = len(triangles)
+
+    depths = abs(np.unique(mesh[:, 2])[::-1])
+    depths_formatted = ", ".join(f"{d:.2f}" for d in depths)
+    layer_thicknesses = np.diff(depths)
+    layer_thicknesses_formatted = ", ".join(f"{l:.2f}" for l in layer_thicknesses)
+
+    trace       = mesh[mesh[:, 2] == 0]
+    n_top_patch = len(trace) - 1
+    l_top_patch = np.linalg.norm(trace[1:, :] - trace[:-1, :], axis=1)
+
+    if verbose:
+        print(f'# -------------------- Mesh info -------------------- ')
+        print(f'Mesh vertices:           {n_vertex}')
+        print(f'Mesh elements:           {n_patch}')
+        print(f'Depths:                  {depths_formatted}')
+        print(f'Layer thicknesses:       {layer_thicknesses_formatted}')
+        print(f'Surface elements:        {n_top_patch}')
+        print(f'Surface element lengths: {l_top_patch.min():.2f} - {l_top_patch.max():.2f}')
+
+    return dict(n_vertex=n_vertex, n_patch=n_patch, depths=depths, layer_thicknesses=layer_thicknesses, trace=trace, n_top_patch=n_top_patch, l_top_patch=l_top_patch)
