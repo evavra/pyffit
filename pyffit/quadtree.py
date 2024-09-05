@@ -2,6 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
+from pyffit.classes import Quadtree
 from pyffit.data import read_grd
 
 
@@ -46,8 +47,8 @@ def main():
     return
 
 
-def quadtree_unstructured(x, y, data, data_index, data_extent, fault=[], level=0, rms_min=0.1, nan_frac_max=0.9, width_min=1, width_max=50,
-             x_samp=[], y_samp=[], data_samp=[], data_samp_std=[], data_tree=[], data_dims=[], data_extents=[], nan_frac=[]):
+def quadtree_unstructured(x, y, data, data_index, data_extent, fault=[], level=0, rms_min=0.1, nan_frac_max=0.9, width_min=1, width_max=50, return_object=False,
+                          x_samp=[], y_samp=[], data_samp=[], data_samp_std=[], data_tree=[], data_dims=[], data_extents=[], nan_frac=[]):
     """
     Perform recursive quadtree downsampling on unstructured data (n,) to obtain a down-sampled set of points (k,)
     based off of data gradients.
@@ -132,7 +133,7 @@ def quadtree_unstructured(x, y, data, data_index, data_extent, fault=[], level=0
 
             # Initiate recursive sampling
             x_samp, y_samp, data_samp, data_samp_std, data_tree, data_dims, data_extents, nan_frac = quadtree_unstructured(cell_x, cell_y, cell_data, cell_index, cell_extent,
-                                rms_min=rms_min, nan_frac_max=nan_frac_max, width_min=width_min, width_max=width_max, level=level + 1,
+                                rms_min=rms_min, nan_frac_max=nan_frac_max, width_min=width_min, width_max=width_max, level=level + 1, return_object=False,
                                 x_samp=x_samp, y_samp=y_samp, data_samp=data_samp, data_samp_std=data_samp_std, data_tree=data_tree, data_dims=data_dims, data_extents=data_extents, nan_frac=nan_frac)
 
         if level == 0:
@@ -141,19 +142,24 @@ def quadtree_unstructured(x, y, data, data_index, data_extent, fault=[], level=0
             y_samp        = np.array(y_samp)
             data_samp     = np.array(data_samp)
             data_samp_std = np.array(data_samp_std)
+            
 
-        return x_samp, y_samp, data_samp, data_samp_std, data_tree, data_dims, data_extents, nan_frac
+            if return_object:
+                return Quadtree(x_samp, y_samp, data_samp, data_samp_std, data_tree, data_dims, data_extents, nan_frac)
+            else:
+                return x_samp, y_samp, data_samp, data_samp_std, data_tree, data_dims, data_extents, nan_frac
 
     # Otherwise, output downsampled data
     else:
+
         i_nan_data    = np.isnan(data)
         n_nan_data    = np.count_nonzero(i_nan_data)
-        nan_frac_data = n_nan_data/(data.size)
+        # nan_frac_data = n_nan_data/(data.size)
         
-        # if len(data) > 0:
-        #     nan_frac_data = n_nan_data/(data.size)
-        # else:
-        #     nan_frac_data = np.nan
+        if len(data) > 0:
+            nan_frac_data = n_nan_data/(data.size)
+        else:
+            nan_frac_data = np.nan
 
         # Output downsampled data or NaN if maximum NaN fraction is exceeded or if not enough pixels exist
         if (nan_frac_data > nan_frac_max) | (np.nanstd(data) == 0):
@@ -181,10 +187,10 @@ def quadtree_unstructured(x, y, data, data_index, data_extent, fault=[], level=0
         for output, result in zip([x_samp, y_samp, data_samp, data_samp_std, data_tree, data_dims, data_extents, nan_frac], results):
             output.extend(result)
 
-        return x_samp, y_samp, data_samp, data_samp_std, data_tree, data_dims, data_extents, nan_frac
+    return x_samp, y_samp, data_samp, data_samp_std, data_tree, data_dims, data_extents, nan_frac
 
 
-def quadtree(x, y, data, row_index, column_index, level=0, rms_min=0.1, nan_frac_max=0.9, width_min=3, width_max=1000,
+def quadtree_structured(x, y, data, row_index, column_index, level=0, rms_min=0.1, nan_frac_max=0.9, width_min=3, width_max=1000,
              x_samp=[], y_samp=[], data_samp=[], data_samp_std=[], row_tree=[], column_tree=[], data_dims=[], nan_frac=[]):
     """
     Perform recursive quadtree downsampling on a grid.
@@ -261,7 +267,7 @@ def quadtree(x, y, data, row_index, column_index, level=0, rms_min=0.1, nan_frac
         return x_samp, y_samp, data_samp, data_samp_std, row_tree, column_tree, data_dims, nan_frac
 
 
-def appy_quadtree(x, y, data, row_tree, column_tree):
+def appy_quadtree_structured(x, y, data, row_tree, column_tree):
     """
     Downsample a gridded dataset using pre-constructed quadtree instance.
 
@@ -331,6 +337,54 @@ def apply_unstructured_quadtree(x, y, data, data_tree, nan_frac_max):
            
     return x_samp, y_samp, data_samp, data_samp_std, nan_frac
 
+
+def apply_quadtree(x, y, data, quadtree, nan_frac_max=0.9):
+    """
+    Downsample a gridded dataset using pre-constructed quadtree instance.
+
+    INPUT:
+    x, y (m, n)    - gridded x/y coordinates
+    data (m, n)    - gridded data values 
+    quadtree       - existing Quadtree object to use to sample new dataset
+    nan_frac_max   - threshhold for maximum percentage of allowed NaN values within cell.
+
+    OUTPUT:
+    x_samp, y_samp, data_samp, data_samp_std (k,) - quadtree downsampled coordinates, data, and bin STDs.
+    """
+
+    # data_tree, nan_frac_max
+    x_samp        = np.empty(len(quadtree.tree))
+    y_samp        = np.empty(len(quadtree.tree))
+    data_samp     = np.empty(len(quadtree.tree))
+    data_samp_std = np.empty(len(quadtree.tree))
+    nan_frac      = np.empty(len(quadtree.tree))
+
+    # Loop over quadtree cells
+    for i, idx in enumerate(quadtree.tree):
+        # Get nan information
+        i_nan_data    = np.isnan(data[idx])
+        n_nan_data    = np.count_nonzero(i_nan_data)
+
+        if n_nan_data == len(i_nan_data):
+            nan_frac_data = np.nan
+        else:
+            nan_frac_data = n_nan_data/(data[idx].size)
+        
+        # Output downsampled data or NaN if maximum NaN fraction is exceeded
+        if (nan_frac_data > nan_frac_max):
+            x_samp[i]        = np.nan        # x_samp 
+            y_samp[i]        = np.nan        # y_samp       
+            data_samp[i]     = np.nan        # data_samp 
+            data_samp_std[i] = np.nan        # data_samp 
+            nan_frac[i]      = nan_frac_data # nan_frac 
+        else:
+            x_samp[i]        = np.mean(x[idx][~i_nan_data]) # x_samp 
+            y_samp[i]        = np.mean(y[idx][~i_nan_data]) # y_samp       
+            data_samp[i]     = np.nanmean(data[idx])        # data_samp 
+            data_samp_std[i] = np.nanstd(data[idx])         # data_samp 
+            nan_frac[i]      = nan_frac_data                # nan_frac 
+           
+    return Quadtree(x_samp, y_samp, data_samp, data_samp_std, quadtree.tree, quadtree.dims, quadtree.extents, nan_frac)
 
 if __name__ == '__main__':
     main()
