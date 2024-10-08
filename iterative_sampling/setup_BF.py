@@ -1,10 +1,12 @@
 import sys
+# Set the path to the functions
 sys.path.append('/raid/class239/xiaoyu/Pamir/pyffit-main')
 
 import pyffit
 import numba
 import numpy as np
-#For inverting the results of iterative sampling based on best fitting models
+# For inverting the results of iterative sampling based on best-fitting models
+# This current iterative sampling is based on R-based sample results, as recommended. But you can feel free to alter it to quad-tree iterative sampling.
 
 
 # Files
