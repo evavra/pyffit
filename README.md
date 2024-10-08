@@ -52,7 +52,7 @@ To demonstrate the inversion, I have created a synthetic example for the case of
 
 ## B. How to iteratively run the inversion
 
-After you have a model from initial sampling, sometimes the inversion and sampling can be improved by sampling the original data based on the forward modeling of best-fitting model parameters. Here we have codes to run the inversion using iterative R-based sampling (available to the public soon). 
+After you have a model from initial sampling, sometimes the inversion and sampling can be improved by sampling the original data based on the forward modeling of best-fitting model parameters. Here we have codes to run the inversion using iterative [R-based Sampling](https://github.com/x3zou/RBSamping)
 
 To do the iterative sampling, assuming you have the results of initial sampling, you will need to:
 
