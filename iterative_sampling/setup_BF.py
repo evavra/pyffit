@@ -7,7 +7,7 @@ import numba
 import numpy as np
 # For inverting the results of iterative sampling based on best-fitting models
 # This current iterative sampling is based on R-based sample results, as recommended. But you can feel free to alter it to quad-tree iterative sampling.
-
+# Also, an elliptical-tapered slip patch is defined here.
 
 # Files
 insar_files = [ # Paths to InSAR datasets
