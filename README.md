@@ -57,7 +57,8 @@ After you have a model from initial sampling, sometimes the inversion and sampli
 To do the iterative sampling, assuming you have the results of initial sampling, you will need to:
 
 1. Run the forward.py based on your initial sampling result to get the full-resolution forward model.
-2. Using full-resolution forward model as an input for R-based sampling.
-3. Run mcmc_BF.py
-4. Repeat steps 1-3 until you get a satisfying results.
+2. Using a full-resolution forward model as an input for R-based sampling.
+3. Run R-based sampling
+4. Run mcmc_BF.py
+5. Repeat steps 1-3 until you get a satisfying results.
 
