@@ -214,7 +214,7 @@ def patch_slip_ellip(m):
     #patch.add_self_geometry((X, Y, Z), strike, dip, l, w, slip=slip)
 
     # Define the size of matrix (NxN) and the central value, and create an empty matrix
-    N = 3
+    N = 5
     u0 = slip
     central = (N+1)/2 - 1
     matrix = np.zeros((N,N))
