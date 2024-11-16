@@ -1,3 +1,6 @@
+## pyffit: Python Finite Fault Inversion Tools
+
+
 ## What to expect next
 1. Elliptical deformation: currently the code only generates box-car deformation on a fault patch, which is probably not the most realistic way. In the future, the code will be updated so that the slips will taper out in an elliptical pattern away from the center.
    
