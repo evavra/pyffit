@@ -176,8 +176,7 @@ def patch_slip(m):
 
 def elliptical_tapering(m,n,N,u0):
     central = (N+1)/2 - 1
-    #axis = N/2
-    axis = (N+1)/2 - 1
+    axis = N/2
     scale1 = np.sqrt(1 - (m - central)**2 / axis**2)
     scale2 = np.sqrt(1 - (n - central)**2 / axis**2)
     return np.array(u0) * scale1 * scale2
