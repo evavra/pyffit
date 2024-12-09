@@ -203,35 +203,3 @@ class Interferogram:
                     print('No satellite track identified.')
                     return
         return
-    #                     if self.track == 'D':
-    #                         self.extent_ra = [self.xmin_ra,
-    #                                        self.xmax_ra,
-    #                                        self.ymin_ra,
-    #                                        self.ymax_ra,]
-                        # else:
-
-
-class Quadtree:
-    """
-    Class to contain attributes of quadtree downsampled dataset
-    
-    ATTRIBUTES:
-    x, y (k,)     - downsampled coordinates
-    data (k,)     - downsamled data values
-    std (k,)      - downsampled data standard deviations
-    dims (k,)     - dimensions of each cell in x/y units.
-    extents (k,)  - extent of each cell in x/y coordinates.
-    nan_frac (k,) - fraction of nan values in each cell.
-    """
-
-    def __init__(self, x, y, data, std, tree, dims, extents, nan_frac):
-        self.x        = x  
-        self.y        = y  
-        self.data     = data  
-        self.std      = std  
-        self.tree     = tree  
-        self.dims     = dims  
-        self.extents  = extents  
-        self.nan_frac = nan_frac  
-
-

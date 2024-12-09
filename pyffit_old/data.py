@@ -124,7 +124,7 @@ def make_insar_table(data, look_table, write=True, omit_nans=True, file_name='in
     return df
 
 
-def load_gmt_fault_file(file, region=[-180, 180, -90, 90], EPSG='', ref_point=[], outname=''):
+def load_gmt_fault_file(file, region=[-180, 180, -90, 90], outname=''):
     """
     Load faults from GMT ASCII file
 
@@ -140,22 +140,9 @@ def load_gmt_fault_file(file, region=[-180, 180, -90, 90], EPSG='', ref_point=[]
 
     breaks = np.where(data.iloc[:, 0].str.contains(r'>', na=True))[0]
 
-    if (len(ref_point) == 2) & (len(EPSG) == 5):
-        ref_point_utm  = proj_ll2utm(ref_point[0], ref_point[1], EPSG)
-
     for i in range(len(breaks) - 1):
         fault = pd.DataFrame({'Longitude': data.iloc[breaks[i] + 1:breaks[i + 1], 0],
                               'Latitude': data.iloc[breaks[i] + 1:breaks[i + 1], 1]}).astype(float)
-
-        if len(EPSG) == 5:
-            fault['UTMx'], fault['UTMy'] = proj_ll2utm(fault['Longitude'], fault['Latitude'], EPSG)
-
-            if len(ref_point) == 2:
-                # Reference UTM coords and convert to km based on reference point
-                fault['UTMx']    -= ref_point_utm[0]
-                fault['UTMy']    -= ref_point_utm[1]
-                fault['UTMx']    /= 1000
-                fault['UTMy']    /= 1000
 
         if any((region[0] <= fault['Longitude']) & (fault['Longitude'] <= region[1]) & (region[2] <= fault['Latitude']) & (fault['Latitude'] <= region[3])):
             faults.append(fault)
