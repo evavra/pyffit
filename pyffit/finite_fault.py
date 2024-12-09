@@ -1,11 +1,183 @@
+import os 
 import time 
 import numba 
 import numpy as np
 # from okada_wrapper
 import cutde.halfspace as HS
+from scipy.interpolate import interp1d
+import h5py
 
 
 # ---------- Classes ----------
+class TriFault:
+    """
+    Finite fault model specified by a set of rectangular slip patches.
+
+    ATTRIBUTES:
+    patches - collection of Patch objects that compose the fault
+
+    """
+
+    def __init__(self, mesh_file, triangle_file, slip=[], slip_components=[0, 1, 2], poisson_ratio=0.25, shear_modulus=30e9, mu=0, eta=0, reg_matrix_dir='.', 
+                 verbose=True, trace_inc=0.01, N_data=True):
+        """
+        Instantiate TriFault object
+        """
+
+        # Geometry
+        self.mesh         = np.loadtxt(mesh_file, delimiter=',', dtype=float)
+        self.triangles    = np.loadtxt(triangle_file, delimiter=',', dtype=int) # CONFIRM MESH USES PYTHON INDEXING
+        self.patches      = self.mesh[self.triangles]
+        self.trace        = self.mesh[self.mesh[:, 2] == 0][:, :2]
+
+        # Physical parameters
+        self.slip_components = slip_components
+        self.poisson_ratio   = poisson_ratio
+        self.shear_modulus   = shear_modulus
+        self.slip            = slip
+        self.moment          = np.nan
+        self.magnitude       = np.nan
+
+        # Regularization
+        self.mu = mu
+        self.eta = eta
+
+        # Other
+        self.verbose = verbose
+        self.N_data = N_data
+
+        # Interpolate trace to specfied increment
+        if trace_inc > 0:
+            interp  = interp1d(self.trace[:, 0], self.trace[:, 1])
+            x_trace = np.linspace(self.trace[:, 0].min(), self.trace[:, 0].max(), int((self.trace[:, 0].max() - self.trace[:, 0].min())/trace_inc) + 1)
+            y_trace = interp(x_trace)
+            self.trace_interp = np.array([x_trace, y_trace]).T
+
+        # Compute moment/magnitude
+        if len(slip) == len(self.patches):
+            self.moment, self.magnitude = get_moment_magnitude(self.mesh, self.triangles, self.slip, shear_modulus=self.shear_modulus)
+
+        # Check to see if regularization file exists
+        reg_file = f'{reg_matrix_dir}/regularization.h5'
+
+        if os.path.exists(reg_file):
+            # Load file
+            f = h5py.File(reg_file, 'r')
+            R = f['R'][()]
+            E = f['E'][()]
+            f.close()
+
+            # If wrong size, redo
+            if R.shape[0] != self.triangles.shape[0]:
+                R, E, get_regularization_matrices(self.mesh, self.triangles, reg_file)
+
+        # Otherwise, make matrices
+        else:
+             R, E, get_regularization_matrices(self.mesh, self.triangles, reg_file)
+
+        self.smoothing_matrix = R
+        self.edge_slip_matrix = E
+
+
+    def greens_functions(self, x, y, z=[]):
+        """
+        Compute fault Green's functions for given data coordinates and fault model.
+    
+        INPUT:
+        x, y - coordinates for Green's function locations
+        OUTPUT:
+        GF - array containing Green's functions for each fault element for each data point 
+             Dimensions: N_OBS_PTS, 3 (E/N/Z), N_SRC_TRIS, 3 (srike-slip/dip-slip/opening)
+
+        """
+
+        # Start timer
+        start = time.time()
+
+        if len(z) == 0 :
+            z = np.zeros_like(x)
+
+        # Prep coordinates and generate Green's functions
+        pts = np.array([x, y, z]).reshape((3, -1)).T.copy() # Convert observation coordinates into row-matrix
+        GF  = HS.disp_matrix(obs_pts=pts, tris=self.patches, nu=self.poisson_ratio) # (N_OBS_PTS, 3, N_SRC_TRIS, 3)
+
+        # Stop timer
+        end = time.time() - start
+
+        # Display info
+        if self.verbose:
+            print(f"Green's function array size:       {GF.reshape((-1, self.triangles.size)).shape} {GF.size:.1e} elements")
+            print(f"Green's function computation time: {end:.2f}")
+
+        return GF
+
+
+    def LOS_greens_functions(self, x, y, look):
+        """
+        Project fault Green's functions into direction specfied by input vectors
+
+        INPUT:
+        G (n_obs, 3, n_patch, 3) - array of Green's functions
+        look  (n_obs, 3) - array of unit vector components
+
+        OUTPUT:
+        G_LOS (n_obs, n_patch, 3)
+        """ 
+
+        GF = self.greens_functions(x, y)
+
+        n_comp = len(self.slip_components)
+
+        start = time.time()
+
+        GF_LOS = np.empty((GF.shape[0], GF.shape[2], n_comp))
+
+        for i in range(GF.shape[0]):
+            for j in range(GF.shape[2]):
+                for k in range(n_comp):
+
+                    GF_LOS[i, j, k] = np.dot(GF[i, :, j, k], look[i, :])
+        
+        end = time.time() - start
+
+        if self.verbose:
+            print(f"LOS Green's function array size:      {GF_LOS.shape} {GF_LOS.size:.1e} elements")
+            print(f"LOS Green's function computation time: {end:.2f}")
+
+        return GF_LOS
+
+
+    def resolution_matrix(self, x, y, look):
+        """
+        Compute data resolution matrix for a given set of observation coordinates and fault mesh.
+        """
+
+        # Compute Greens Functions
+        # GF = get_fault_greens_functions(x, y)
+
+        # Project to LOS
+        GF_LOS = np.squeeze(self.LOS_greens_functions(x, y, look))
+
+        # Add regularization  
+        G = np.vstack((GF_LOS, self.mu*self.smoothing_matrix, self.eta*self.edge_slip_matrix))      
+        
+        # Compute the generalized inverse of the Greens functions
+        GtG     = G.T @ G
+        GtG_inv = np.linalg.solve(GtG, np.eye(len(GtG)))
+        G_g     = GtG_inv @ G.T
+
+        # Compute resolution matrix
+        N = G @ G_g
+
+        if self.N_data:
+            N = N[:len(look), :len(look)] # ignore rows corresponding to regularization terms
+        return N
+
+
+    def update_slip(self, slip):
+        self.slip = slip
+        self.moment, self.magnitude = get_moment_magnitude(self.mesh, self.triangles, self.slip, shear_modulus=self.shear_modulus)
+
 class Fault:
     """
     Finite fault model specified by a set of rectangular slip patches.
@@ -48,7 +220,7 @@ class Fault:
 
     def greens_functions(self, x, y, z, alpha, slip_modes=[0, 1, 2], components=[0, 1, 2], uniform_slip=False):
         """
-        Aggregate all fault patch Greens functions into matrix G.
+        Aggregate all fault patch Green's functions into matrix G.
 
         INPUT:
         x, y, z    - observation locations
@@ -362,7 +534,7 @@ class Patch:
         slip_modes - list containing slip modes to use (0=strike-slip, 1=dip slip, 2=opening)
 
         OUTPUT:
-        g (3*n_obs, n_mode) - Greens function matrix where each row corresponds to a displacment component
+        g (3*n_obs, n_mode) - Green's function matrix where each row corresponds to a displacment component
                               at an observation point and the rows correspond to slip mode.
         """
         n_obs     = len(x)
@@ -474,20 +646,21 @@ def make_simple_FFM(fault_dict, avg_strike=np.nan):
 
 def get_fault_greens_functions(x, y, z, mesh, triangles, nu=0.25, verbose=True):
     """
-    Compute fault Greens functions for given data coordinates and fault model.
+    Compute fault Green's functions for given data coordinates and fault model.
 
     INPUT:
 
 
     OUTPUT:
-    GF - array containing Greens functions for each fault element for each data point 
+    GF - array containing Green's functions for each fault element for each data point 
          Dimensions: N_OBS_PTS, 3 (E/N/Z), N_SRC_TRIS, 3 (srike-slip/dip-slip/opening)
 
     """
+
     # Start timer
     start = time.time()
 
-    # Prep coordinates and generate Greens functions
+    # Prep coordinates and generate Green's functions
     pts = np.array([x, y, z]).reshape((3, -1)).T.copy() # Convert observation coordinates into row-matrix
     GF  = HS.disp_matrix(obs_pts=pts, tris=mesh[triangles], nu=nu) # (N_OBS_PTS, 3, N_SRC_TRIS, 3)
 
@@ -496,8 +669,8 @@ def get_fault_greens_functions(x, y, z, mesh, triangles, nu=0.25, verbose=True):
 
     # Display info
     if verbose:
-        print(f'Greens function array size:      {GF.reshape((-1, triangles.size)).shape} {GF.size:.1e} elements')
-        print(f'Greens function computation time: {end:.2f}')
+        print(f"Green's function array size:      {GF.reshape((-1, triangles.size)).shape} {GF.size:.1e} elements")
+        print(f"Green's function computation time: {end:.2f}")
 
     return GF
 
@@ -548,35 +721,35 @@ def get_full_disp(data, GF, slip, grid=False):
     return disp_full
 
 
-def proj_greens_functions(G, U, verbose=False):
+def proj_greens_functions(G, U, slip_components=[0, 1, 2], verbose=True):
     """
-    Project fault Greens functions into direction specfied by input vectors.
-        n_obs  - number of observations
-        n_patch - number of fault patches
-        n_mode  - number of slip modes
+    Project fault Green's functions into direction specfied by input vectors
 
     INPUT:
-    G (n_obs, 3, n_patch, n_mode) - array of Greens functions
-    U  (n_obs, 3)                 - array of unit vector components
+    G (n_obs, 3, n_patch, 3) - array of Green's functions
+    U  (n_obs, 3) - array of unit vector components
 
     OUTPUT:
-    G_proj (n_obs, n_patch, n_mode) - array of LOS Greens functions
+    G_proj (n_obs, n_patch, 3)
     """ 
+
+    n_comp = len(slip_components)
+
     start = time.time()
 
-    G_proj = np.empty((G.shape[0], G.shape[2], G.shape[3]))
+    G_proj = np.empty((G.shape[0], G.shape[2], n_comp))
 
     for i in range(G.shape[0]):
         for j in range(G.shape[2]):
-            for k in range(G.shape[3]):
+            for k in range(n_comp):
 
                 G_proj[i, j, k] = np.dot(G[i, :, j, k], U[i, :])
     
     end = time.time() - start
 
     if verbose:
-        print(f'LOS Greens function array size:      {G_proj.shape} {G_proj.size:.1e} elements')
-        print(f'LOS Greens function computation time: {end:.2f}')
+        print(f"LOS Green's function array size:      {G_proj.shape} {G_proj.size:.1e} elements")
+        print(f"LOS Green's function computation time: {end:.2f}")
 
     return G_proj
 
@@ -604,7 +777,7 @@ def get_fault_info(mesh, triangles, verbose=True):
     n_patch  = len(triangles)
 
     depths = abs(np.unique(mesh[:, 2])[::-1])
-    depths_formatted = ", ".join(f"{d:.2f}" for d in depths)
+    depths_formatted  = ", ".join(f"{d:.2f}" for d in depths)
     layer_thicknesses = np.diff(depths)
     layer_thicknesses_formatted = ", ".join(f"{l:.2f}" for l in layer_thicknesses)
 
@@ -622,3 +795,158 @@ def get_fault_info(mesh, triangles, verbose=True):
         print(f'Surface element lengths: {l_top_patch.min():.2f} - {l_top_patch.max():.2f}')
 
     return dict(n_vertex=n_vertex, n_patch=n_patch, depths=depths, layer_thicknesses=layer_thicknesses, trace=trace, n_top_patch=n_top_patch, l_top_patch=l_top_patch)
+
+
+def get_moment_magnitude(mesh, triangles, slip_model, shear_modulus=30e9):
+    """
+    Compute moment and moment magnitude from a given fault slip model.
+    """
+
+    # Compute magnitude
+    patch_area   = np.empty(len(slip_model))
+    patch_slip   = np.empty(len(slip_model))
+    patch_moment = np.empty(len(slip_model))
+
+    for j in range(len(slip_model)):
+        patch = mesh[triangles[j]]
+
+        # Get patch area via cross product
+        ab = patch[0, :] - patch[1, :]
+        ac = patch[0, :] - patch[2, :]
+        patch_area[j] = np.linalg.norm(np.cross(ab, ac), ord=2)/2 * 1e6 # convert from km^3 to m^3
+
+        # Get slip magnitude
+        patch_slip[j] = np.linalg.norm(slip_model[j, :], ord=2) * 1e-3 # convert from mm to m
+
+        # Compute magnitude
+        patch_moment[j] = shear_modulus * patch_area[j] * patch_slip[j] * 1e7 # convert from N-m to dyne-cm
+
+    # Get moment and moment magnitude
+    moment    = np.sum(patch_moment)
+    magnitude = (2/3) * np.log10(moment) - 10.7
+
+    return moment, magnitude
+
+
+def get_regularization_matrices(mesh, triangles, filename):
+    """
+    Make regularziaiton matrices for given fault mesh.
+    """
+
+    print(f'Saving regularization matrices to {filename}')
+    
+    f = h5py.File(filename, 'w')
+
+    # Get smoothness regularization matrix
+    R = get_smoothing_matrix(mesh, triangles)
+
+    # Get zero-slip regularization matrix
+    E = get_edge_matrix(mesh, triangles, R)
+
+    f.create_dataset('R', data=R)
+    f.create_dataset('E', data=E)
+    f.close()
+
+    return R, E
+
+
+def get_smoothing_matrix(mesh, triangles):
+    """
+    Form first-difference regularization matrix for triangular fault mesh.
+
+    Each triangular element has three forward first-order differences:\
+
+        ds_i/dr_i = (s_i - s_0)/||r_i - r_0||**2
+
+    where s is the slip associate with each element, r are the element centroid coordinates, 
+    index 0indicates the reference element, and index i indicates a neighboring element.
+
+
+    INPUT:
+    mesh (m, 3)      - x/y/z coordinates for mesh vertices
+    triangles (n, 3) - row indices for mesh vertices corresponding to the nth element
+    
+    OUTPUT:
+    R (n, n) - finite-difference matrix where each row encodes the finite-difference operator
+               corresponding to the nth element.
+    """
+
+    R = np.zeros((len(triangles), len(triangles)))
+    
+    # Loop over each fault patch
+    for i, tri in enumerate(triangles):
+        pts = mesh[tri]
+
+        # Get neighboring patches (shared edge)
+        for cmb in combinations(tri, 2):
+
+            # Check if each row contains the values
+            for j, tri0 in enumerate(triangles):
+                result = np.isin(cmb, tri0)
+
+                # Neighbor triangle if two vertices are shared and not the original triangle
+                if (sum(result) == 2) & (i != j):
+
+                    # Nearest-neighbor only
+                    R[i, j] -= 1
+                    R[i, i] += 1
+                    break
+
+    return R
+
+
+def get_edge_matrix(mesh, triangles, R):
+    """
+    Place zero-slip condition along bottom and side edges of fault.
+    """
+
+    E = np.zeros_like(R)
+
+    # Smoothing-matrix method
+    # Get number of finite differences for each element
+    # n_diff = np.sum(np.abs(R) > 0, axis=1)
+
+    # for i in range(len(R)):
+
+        # Check if edge element by counting number of finite differences
+        # 4 if fully surrounded by neighboring elements
+        # 3 if one side is an edge
+        # 2 if two sides are edges (corner element)
+
+        # if n_diff[i] != 4:
+        #     E[i, i] = n_diff[i]
+
+        #     pts = mesh[triangles[i]][:, 2]
+        #     print(pts)
+            # If not at surface
+            # if 0 in z_pts:
+            #     print(i, z_pts)
+
+            # if 0 not in z_pts:
+                
+                # E[i, i] = 1
+
+
+    # Geometric method
+    xmin = mesh[:, 0].min()
+    xmax = mesh[:, 0].max()
+    ymin = mesh[:, 1].min()
+    ymax = mesh[:, 1].max()
+    zmin = mesh[:, 2].min()
+    zmax = mesh[:, 2].max()
+
+    for i in range(len(R)):
+        # Get vertices of each triangle
+        pts = mesh[triangles[i]]
+
+        # If any vertex is on the mesh edge (except for the top), add boundary constraint
+        cond = ((xmin in pts[:, 0]) | (xmax in pts[:, 0]) | (ymin in pts[:, 1]) | (ymax in pts[:, 1]) | (zmin in pts[:, 2])) & (zmax not in pts[:, 2])
+        # cond = (zmax not in pts[:, 2])
+
+        if cond:
+            E[i, i] = 1
+
+    return E
+
+
+

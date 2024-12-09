@@ -8,6 +8,88 @@ from scipy.optimize import least_squares
 import matplotlib
 import corner
 from multiprocessing import Pool
+from scipy.optimize import lsq_linear
+
+# -------------------------- Classes --------------------------
+class LinearInversion:
+    """
+    Class to set up and perform a linear finite slip inversion
+
+    INITIALIZATION:
+    fault        - TriFault object for finite fault model
+    dataset_dict -  dictionary containing InversionDataset objects organized by specified 
+                    dataset labels
+    verbose      - display progress/log messages (default = True)
+
+    METHODS:
+    LinearInversion.run() - perform linear inversion
+    """
+
+    def __init__(self, fault, dataset_dict, verbose=True):
+
+        # Form inversion inputs
+        self.datasets         = dataset_dict
+        self.greens_functions = np.vstack([self.datasets[key].greens_functions for key in self.datasets.keys()])
+        self.data             = np.concatenate([self.datasets[key].tree.data for key in self.datasets.keys()])
+        self.verbose          = verbose
+
+        # ------------------ Perform inversion ------------------
+        # Form full design matrix
+        self.G = np.vstack((self.greens_functions, fault.mu*fault.smoothing_matrix, fault.eta*fault.edge_slip_matrix)) # Add regularization        
+        self.d = np.hstack((self.data, np.zeros(fault.smoothing_matrix.shape[0] + fault.edge_slip_matrix.shape[0]))) # Pad data vector with zeros
+
+    def run(self, slip_lim=(-np.inf, np.inf)):
+        """
+        Perform least-squares solve and update internal InversionDataset objects
+        """
+
+        # Solve using bounded least squares to enforce slip direction constraint
+        start      = time.time()
+        results    = lsq_linear(self.G, self.d, bounds=slip_lim)
+        slip_model = np.column_stack((results.x, np.zeros_like(results.x), np.zeros_like(results.x)))
+        end        = time.time() - start
+
+        # Print run time
+        if self.verbose:
+            print('\n' + f'Inversion time: {end:.2f} s')
+
+        # Get forward model prediction and update object
+        for key in self.datasets.keys():
+            self.datasets[key].add_results(slip_model[:, 0])
+
+        # Compute error terms
+        self.resids = np.concatenate([self.datasets[key].resids for key in self.datasets.keys()])
+        self.rms    = np.sqrt(np.sum(self.resids**2)/len(self.resids))
+
+        return slip_model
+
+
+class InversionDataset:
+    """
+    Class for organizing data and results for finite slip inversions.
+    """
+
+    def __init__(self, tree, greens_functions):
+        """
+        Add input data and Green's functions to input to inverion
+        """
+        self.tree = tree
+        self.greens_functions = greens_functions
+
+    def add_results(self, slip_model):
+        """
+        Compute forward model prediction and get residuals and RMS
+        """
+        self.slip_model = slip_model
+        start = time.time()
+        self.model      = self.greens_functions.dot(slip_model)
+        end = time.time() - start
+
+        self.resids     = self.tree.data - self.model     
+        self.rms        = np.sqrt(np.sum(self.resids**2)/len(self.resids))
+
+        self.model_time = end
+        print(f'Model time: {200*self.model_time:.5f}')
 
 # -------------------------- Probability methods --------------------------
 def cost_function(m, coords, d, S_inv, model):
@@ -70,6 +152,7 @@ def log_likelihood(G_m, d, S_inv, B):
     r = d - G_m
 
     return -0.5 * r.T @ S_inv @ B @ r
+
 
 # -------------------------- Sampling methods -------------------------- 
 def run_hammer(log_prob_args, priors, log_prob, n_walkers, n_step, m0, backend, moves, 
@@ -307,6 +390,381 @@ def mcmc(priors, log_prob, out_dir, m0=[], init_mode='uniform', moves=[emcee.mov
     pyffit.figures.plot_triangle(flat_samples, priors, labels, units, scales, out_dir)    
     return
 
+
+# -------------------------- Kalman Filter --------------------------
+import os
+import h5py
+import time
+import emcee
+import numba
+import numpy as np
+import matplotlib.pyplot as plt
+from scipy.integrate import solve_ivp
+from scipy.optimize import least_squares
+from matplotlib.lines import Line2D
+from multiprocessing import Pool
+
+def main():
+    """
+    Functions for SIOG 239 - Advanced Inverse Theory (WI22).
+    """
+    HW_6()
+    return
+
+
+# -------------------- ASSIGNMENTS -------------------- 
+def EnKF_driver():
+    # Load results from previous HWs
+    (B, F, J, R, T, U, l, mu_0, n_x, n_y, t, t_B, t_T, t_T_hat, x, x_0, x_0_hat, x_B, x_T, x_T_hat, x_attractor, x_s, y) = load_results('HW_1')
+    
+    # ---------- Set parameters ---------- 
+    # Model & observations
+    n_dim    = 40                       # Get model dimension
+    n_e      = 20                        # ensemble size
+    dT       = 0.2                      # observation sampling interval
+    dt       = 0.05                     # Model timestep interval
+    grid_dim = 2
+    alpha    = np.logspace(-3, 0, grid_dim)[::-1] # inflation factors
+    l        = np.linspace(1, 10, grid_dim)      # localization factors
+    # alpha   = np.array([0.08])    # localization factors
+    # l       = np.array([3,])    # localization factors
+    discard = 500                      # number of spin-up steps to remove from mean RMSE and spread calculations
+    out_dir = 'HW_6/grid_search' # Output directory
+
+    # ---------- Load observations ---------- 
+    y_t      = np.loadtxt('HW_6/HW6_obs_n40.txt', delimiter=',').T   # "Observations"
+    x_t      = np.loadtxt('HW_6/HW6_truth_n40.txt', delimiter=',').T # Truths
+    samp_inc = int(dT/dt)
+    x_t_samp = x_t[samp_inc::samp_inc]                               # Sampled truths
+    n_obs    = y_t.shape[0] # number of observations
+    n_samp   = y_t.shape[1] # number of samples for each observation
+    H        = np.eye(n_dim)[::n_dim//n_samp, :] # Sampling matrix
+    T        = np.arange(dT, dT*n_obs + dT, dT)  # Observation times
+    t        = np.arange(0, dt*x_t.shape[0], dt) # Model times
+    x_idx    = np.arange(0, n_dim, 1)
+    y_idx    = np.arange(0, n_dim, 2)
+    steps    = np.arange(0, n_obs)
+    R        = np.eye(n_samp)
+    
+    # ---------- Run Kalman filter ----------
+       # Run long simulation
+    start    = time.time()
+    sol_long = L96(np.random.uniform(low=0, high=1, size=n_dim), [0, 1000], F)
+    end      = time.time() - start
+    x_long   = sol_long.y.T
+    t_long   = sol_long.t 
+    print('Long simulation complete: {:.1f} s'.format(end))
+
+    # Initialize ensemble with states from long simulation x_B
+    i_samp = np.random.randint(low=0, high=len(x_long), size=n_e)
+    x_init = x_long[i_samp]
+
+    rmse_means = np.empty((len(alpha), len(l)))
+    count = 0
+    for i in range(len(alpha)):
+        for j in range(len(l)):
+            rmse_means[i, j] = complete_EnKF(x_init, y_t, M, R, H, alpha[i], l[j], x_t_samp, discard, out_dir)
+            count += 1
+            print(f'Finished {count}/{l.size*alpha.size}')
+
+
+    if len(alpha) | len(l) > 1:
+        fig, ax = plt.subplots(figsize=(6.4, 4.8))
+        extent = [l[0], l[-1], alpha[0], alpha[-1]]
+        grd = ax.imshow(rmse_means, extent=extent, cmap='magma_r')
+        ax.set_aspect(abs((extent[1]-extent[0])/(extent[3]-extent[2])))
+        ax.set_ylabel(r'$\alpha$')
+        ax.set_xlabel(r'$l$')
+        fig.colorbar(grd, label='Mean RMSE')
+        fig.savefig(f'{out_dir}/grid_search.png', dpi=500)
+        plt.show()
+          
+
+def M(x_0): 
+    return L96(x_0, [0, 0.2], 8).y.T[-1, :] # Wrapper for forward model
+    
+
+@numba.jit(nopython=True)
+def dx_dt(t, x, F):
+    n = len(x)
+    return [-x[i] + (x[(i + 1) % n] - x[i - 2]) * x[i - 1] + F for i in range(n)]
+
+
+def L96(x_0, t, F):
+    """
+    Integrate the Lorentz '96 model over time history t.
+    
+    INPUT:
+    t   - integration time range
+    x_0 - initial state vector (n,)
+    F   - forcing factor
+    
+    OUTPUT:
+    x - model state vector at time T
+    """
+    
+    # Define time derivative operator
+    # dx_dt = lambda t, x: [-x[i] + (x[(i + 1) % n] - x[i - 2]) * x[i - 1] + F for i in range(len(x_0))]
+    
+    # Integrate
+    return solve_ivp(dx_dt, t, x_0, args=(F,), method='RK45')
+
+
+def cost_function(x_0, y, M, R, l, U, mu_0):
+    """
+    Cost function F(x).
+    
+    INPUT:
+    x_0  (n_x,)          - initial model state vector
+    y    (n_y,)          - data vector
+    M    (function)      - model function handle which takes x_0 as an  
+                           argument and returns an (n_x,) vector
+    R    (n_y, n_y)      - diagonal data covariance matrix
+    B    (n_x, n_x)      - background covariance matrix
+    mu_0 (n_y or scalar) - regularization value(s)
+    
+    OUTPUT:
+    F(x_0)               - cost function evaluated for x_0
+    """
+    
+    # Get dimensions
+    n_x = len(x_0)
+    n_y = len(y)
+    
+    # Compute misfit term (H is implemented via indexing)
+    # a = np.diag(np.diag(R)**-0.5) @ (y - M(x_0)[::n_x//n_y])    
+    a = (y - M(x_0)[::n_x//n_y])    
+         
+    # Compute regularization term 
+    # l, U = np.linalg.eig(B) # Get eigenvalues and eigenvectors
+    # b = U @ np.diag(l**-0.5) @ (x_0 - mu_0) # Compute product
+    b = U @  (x_0 - mu_0)/(l**0.5) # Compute product
+  
+    # Compute the cost of x_0 using a and b
+    # return 0.5 * np.linalg.norm(a, ord=2)**2 + 0.5 * np.linalg.norm(b, ord=2)**2
+
+    return np.hstack((a, b)) * (0.5**-0.5)
+
+
+def load_results(hw):
+    # Load and return results
+    file = h5py.File('results.hdf5', 'r')
+
+    # Print list of variables
+    print(f'Getting results from {hw}:')
+    print('(' + ', '.join(file[hw].keys()) + ')')
+
+    # Get variables
+    output = []
+    for var in file[hw].keys():
+        output.append(file[f'{hw}/{var}'][()])
+
+    return output
+
+
+def RMSE(m, d):
+    """
+    Compute root-mean-square error of a model m with respect to data d.
+    """
+    # return ((1/len(d)) * np.sum((m - d)**2))**0.5
+    return ((1/len(d)) * np.sum((m - d)**2))**0.5
+
+
+def spread(P):
+    """
+    Compute root-mean-square error of a model m with respect to data d.
+    """
+    return (np.trace(P)/P.shape[0])**0.5
+
+
+def EnKF(x_init, y, M, R, H, alpha=0, L=[]):
+    """
+    INPUT:
+    x_init (n_e, n_dim) - intial state, also defines size of ensemble n_e and model dimesion n_dim
+    y (n_obs, n_samp)  - observations
+    M (function)       - function handle for model
+    R (n_samp, n_samp) - data covariance matrix
+    H (n_samp, n_dim)  - matrix mapping model output x to observations y
+    """
+
+    # ---------- Ensemble Kalman Filter ---------- 
+    n_e,   n_dim   = x_init.shape
+    n_obs, n_samp  = y.shape
+    x_f_e  = np.empty((n_obs, n_e, n_dim))   # Ensemble forecasts
+    x_a_e  = np.empty((n_obs, n_e, n_dim))   # Ensemble analyses
+    mu_f   = np.empty((n_obs, n_dim))        # Forecast means
+    mu_a   = np.empty((n_obs, n_dim))        # Analysis means
+    P_f    = np.empty((n_obs, n_dim, n_dim)) # Forecast means
+    P_a    = np.empty((n_obs, n_dim, n_dim)) # Analysis means
+
+    print()
+    print('##### Running ensemble Kalman filter ##### ')
+    print(f'{n_dim} parameters')
+    print(f'{n_obs} observations')
+    print(f'{n_e} ensemble members')
+
+    start = time.time()
+
+    for i in range(0, n_obs):
+        # 1) ---------- Forecast ----------
+        # Make forecast ensemble
+        for j in range(n_e):
+            x_f_e[i, j, :] = M(x_init[j, :])
+
+        # Compute mean and covariance
+        mu_f[i, :]   = np.mean(x_f_e[i, :, :], axis=0)
+        P_f[i, :, :] = np.cov(x_f_e[i, :, :].T)
+
+        # Inflate
+        if alpha:
+            x_f_e[i, :, :] = mu_f[i, :] + np.sqrt(1 + alpha)*(x_f_e[i, :, :] - mu_f[i, :])
+
+        # Localize
+        if len(L):
+            P_f[i, :, :] = np.multiply(L, P_f[i, :, :])
+
+        # 2) ---------- Analysis ----------
+        # Perturb observation
+        y_p = np.random.multivariate_normal(y[i, :], R, size=(n_e))
+
+        # Get Kalman gain
+        HPfHT_inv = np.linalg.lstsq((H @ P_f[i, :, :] @ H.T + R), np.eye(n_samp), rcond=None)[0] # Do linear solve for matrix inverse
+        K         = P_f[i, :, :] @ H.T @ HPfHT_inv 
+
+        # Update ensemble, mean, and covariance
+        for j in range(n_e):
+            x_a_e[i, j, :] = x_f_e[i, j, :] + K @ (y_p[j, :] - H @ x_f_e[i, j, :])
+
+        mu_a[i, :]   = np.mean(x_a_e[i, :, :], axis=0)
+        P_a[i, :, :] = np.cov(x_a_e[i, :, :].T)
+
+        # Use current analysis ensemble to initialize next forecast
+        x_init = x_a_e[i, :, :] 
+
+    end = time.time() - start
+    print('##### Ensemble Kalman filter complete #####')
+    print('Elapsed time: {:.1f} s'.format(end))
+    print()
+
+    return x_f_e, x_a_e, mu_f, mu_a, P_f, P_a
+
+
+def analyze_KF_error(x_KF, x_true, P_a):
+    """
+    Check Kalman filter realized error (RMSE) vs. predicted error (spread).
+
+    INPUT:
+    x_KF   (n_obs, n_dim)          - Kalman filter state estimates
+    x_true (n_obs, n_dim)          - true states
+    P_a    (n_obs, n_samp, n_samp) - analysis covariance matrices corresponding to state estimates
+
+    OUTPUT:
+    rmse (n_obs) - root-mean-square-error at each observation time
+    sprd (n_obs) - spread of the analysis covariance matrix at each observation time
+    
+    """
+
+    n_obs = x_KF.shape[0]
+    rmse = np.empty(n_obs) # Analysis RMSE
+    sprd = np.empty(n_obs) # Analysis spread
+
+    # Compute RMSE and spread at each observation point
+    for i in range(n_obs):
+        rmse[i] = RMSE(x_KF[i, :], x_true[i, :]) 
+        sprd[i] = spread(P_a[i, :, :])
+
+    return rmse, sprd
+
+    # # Check observation sampling
+
+
+def complete_EnKF(x_init, y, M, R, H, alpha, l, x_true, discard, out_dir):
+    """
+    Complete 
+    """
+    # Get dimensions
+    n_e,   n_dim   = x_init.shape
+    n_obs, n_samp  = y.shape
+
+    # Form localization matrix L
+    L = get_L(n_dim, l)
+    plot_L(L, l, out_dir)
+
+    # Run ensemble kalman filter
+    x_f_e, x_a_e, mu_f, mu_a, P_f, P_a = EnKF(x_init, y, M, R, H, alpha=alpha, L=L)
+
+    # Perform error analysis
+    rmse, sprd    = analyze_KF_error(mu_a, x_true, P_a)
+    rmse_cumm_avg = np.array([np.mean(rmse[:i]) for i in range(n_obs)])
+    sprd_cumm_avg = np.array([np.mean(sprd[:i]) for i in range(n_obs)])
+    rmse_mean     = np.nanmean(rmse_cumm_avg[discard:])
+    sprd_mean     = np.nanmean(sprd_cumm_avg[discard:])
+
+    plot_errors(rmse, sprd, rmse_cumm_avg, sprd_cumm_avg, rmse_mean, sprd_mean, discard, alpha, l, out_dir)
+
+    return rmse_mean
+
+
+def get_L(n_dim, l):
+    """
+    Get Localization matrix L.
+    """
+
+    L = np.empty((n_dim, n_dim))
+
+    for i in range(n_dim):
+        for j in range(n_dim):
+            r = abs(i - j)
+            d = min(r, n_dim - r)
+            L[i, j] = np.exp(-0.5 * (d/l)**2)
+
+    return L
+
+
+def plot_L(L, l, out_dir):
+    # Check Localization matrix
+    fig, ax = plt.subplots(figsize=(6.4, 4.8))
+    fig.suptitle(f'l = {l}')
+    im = ax.imshow(L, extent=[0, len(L), len(L), 0], cmap='Reds')
+    ax.set_xlabel(r'$j$')
+    ax.set_ylabel(r'$i$')
+    fig.colorbar(im, label=r'$L_{ij}$')
+    plt.savefig(f'{out_dir}/Fig03_l_{l}.png', dpi=500)
+    return fig
+
+
+def plot_errors(rmse, sprd, rmse_cumm_avg, sprd_cumm_avg, rmse_mean, sprd_mean, discard, alpha, l, out_dir):
+    """
+    Plot EnKF RMSE and spread evolution.
+    """
+    n_obs = len(rmse)
+    ymax = int(np.max([rmse.max(), sprd.max()]) + 1)
+    ylim = [0, ymax]
+
+    fig, ax = plt.subplots(2, 1)
+    fig.suptitle('Mean RMSE = {:.2f}, Mean spread = {:.2f}'.format(rmse_mean, sprd_mean))
+    ax[0].fill_between([0, discard], [0, 0], [ymax, ymax], edgecolor=None, facecolor='gray', alpha=0.4)
+    ax[0].plot(rmse, c='tomato',)
+    ax[0].plot(sprd, c='steelblue',)
+    ax[0].set_xlabel('')
+    ax[0].set_xticklabels([])
+    ax[0].set_ylabel('Error')
+    
+    ax[1].fill_between([0, discard], [0, 0], [ymax, ymax], edgecolor=None, facecolor='gray', alpha=0.4)
+    ax[1].plot(rmse_cumm_avg, c='tomato',    label='RMSE')
+    ax[1].plot(sprd_cumm_avg, c='steelblue', label='Spread')
+    ax[1].set_ylim(ylim)
+    ax[1].set_xlabel('Step')
+    ax[1].set_ylabel('Average Error')
+    ax[1].legend()
+
+    for ax0 in ax:
+        ax0.set_xlim(0, n_obs)
+
+    plt.savefig(f'{out_dir}/errors_alpha_{alpha}_l_{l}.png', dpi=500)
+    return
+
+
 # -------------------------- Utility methods --------------------------
 def config_backend(file_name, n_walkers, n_dim):
     """
@@ -382,7 +840,7 @@ def plot_chains(samples, samp_prob, priors, discard, labels, units, scales, key,
         ax.plot(samples[discard:, :, i] * scales[i], "k", alpha=0.3, linewidth=0.5)
         ax.set_xlim(0, len(samples))
         ax.set_ylim(prior_vals[i][0], prior_vals[i][1])
-        ax.set_ylabel(labels[i] + f'\n ({units[i]})')
+        ax.set_ylabel(labels[i] + '\n' + f' ({units[i]})')
         # ax.yaxis.set_label_coords(-0.1, 0.5)
 
     # Plot log-probability

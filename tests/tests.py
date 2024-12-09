@@ -4,12 +4,28 @@ import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 from pyffit.quadtree import quadtree
 from pyffit.data import read_grd
+from pyffit.classes import Interferogram
 # import cutde
 
 
 def main():
-    test_quadtree()
+    test_intf()
+    return
 
+def test_intf():
+    path = '/Users/evavra/Projects/Taiwan/ALOS2/A139/F4/intf/20220807_20220918'
+    intf = Interferogram(path, verbose=True)
+
+    fig, ax = plt.subplots(figsize=(6.4, 4.8))
+    ax.imshow(intf.data['phase'], extent=intf.extent)
+    ax.set_aspect(0.25)
+
+    if intf.track == 'A':
+        ax.invert_yaxis()
+
+
+    plt.show()
+    
     return
 
 def test_quadtree():

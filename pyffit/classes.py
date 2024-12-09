@@ -146,8 +146,6 @@ class Interferogram:
                         # else:
 
 
-
-
 class Quadtree:
     """
     Class to contain attributes of quadtree downsampled dataset
@@ -170,3 +168,5 @@ class Quadtree:
         self.dims     = dims  
         self.extents  = extents  
         self.nan_frac = nan_frac  
+
+
