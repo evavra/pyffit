@@ -1,4 +1,6 @@
 import os
+import time
+import shutil
 import numpy as np
 import pandas as pd
 from pyproj import CRS, Proj
@@ -318,18 +320,59 @@ def clip_grid(x, y, grid, region, extent=False):
         return x_clip, y_clip, grid_clip
 
 
-def check_dir_tree(dir_path):
+def check_dir_tree(dir_path, clear=False):
     """
-    Check if directory tree exists and create directories if not.
+    Check if directory tree exists and create directories if not. 
+    Specify clear=True to overwrite existing directory
     """
 
-    dirs = dir_path.split('/')
+    if not os.path.exists(dir_path):
+        os.makedirs(dir_path)
+    else:
+        if clear:
+            shutil.rmtree(dir_path)  
+            os.makedirs(dir_path)
 
-    for l in range(len(dirs)):
-        if len(dirs[l]) == 0:
-            continue
-        else:
-            sub_dir = '/'.join(dirs[:l + 1])
-            if os.path.isdir(sub_dir) is not True:
-                os.mkdir(sub_dir)
+
+    # dirs = dir_path.split('/')
+
+    # for l in range(len(dirs)):
+    #     if len(dirs[l]) == 0:
+    #         continue
+    #     else:
+    #         sub_dir = '/'.join(dirs[:l + 1])
+    #         if os.path.isdir(sub_dir) is not True:
+    #             os.mkdir(sub_dir)
     return
+
+
+def convert_timedelta(td, unit='Y'):
+    """
+    Convert timedelta to years (Y) or days (D)
+    """
+    dt = td/np.timedelta64(1, 'D')
+
+    if unit == 'Y':
+        dt /= 365.25
+    return dt
+
+
+def ongoing_run_time(message, time_prev, units='s'):
+    """
+    Print operation run time and return current time.
+    Time is printed at end of message with units appended.
+    Default is seconds ('s')
+    """
+
+    time_now = time.time()
+    dt       = time_now - time_prev
+
+    if units != 's':
+        if units == 'min':
+            dt /= 60
+        elif units == 'hr':
+            dt /= 3600 
+
+    print(f'{message} {dt:.1f} {units}')
+
+    return time_now
