@@ -6,7 +6,7 @@ import numpy as np
 import cutde.halfspace as HS
 from scipy.interpolate import interp1d
 import h5py
-
+from itertools import combinations
 
 # ---------- Classes ----------
 class TriFault:
@@ -69,12 +69,18 @@ class TriFault:
 
             # If wrong size, redo
             if R.shape[0] != self.triangles.shape[0]:
-                R, E, get_regularization_matrices(self.mesh, self.triangles, reg_file)
+                R, E = get_regularization_matrices(self.mesh, self.triangles, reg_file)
 
-        # Otherwise, make matrices
+        # Otherwise, make matrices and save to file
         else:
-             R, E, get_regularization_matrices(self.mesh, self.triangles, reg_file)
+            R, E = get_regularization_matrices(self.mesh, self.triangles, reg_file)
 
+            # Load file
+            f = h5py.File(reg_file, 'w')
+            f.create_dataset('R', data=R)
+            f.create_dataset('E', data=E)
+            f.close()
+        
         self.smoothing_matrix = R
         self.edge_slip_matrix = E
 
