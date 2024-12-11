@@ -43,14 +43,16 @@ def make_synthetic_aps(X0, Z0, klim=[-3, 5], kinc=0.1, manual_amp=0, amp_ref=5.0
     # Get spectral parameters
     amp, k, Pk = get_aps_params(klim=klim, kinc=kinc, amp_ref=amp_ref, nexp_ref=nexp_ref, lc_ref=lc_ref)
 
+
     # Get grid information
     NX0   = len(X0)        # get desired x grid dimesion
     NZ0   = len(Z0)        # get desired z grid dimesion
-    dx    = np.diff(X[:2]) # grid size(km)
+    dx    = np.diff(X[:2]) # grid size (km)
     LX    = np.max(X) - np.min(X)
     LZ    = np.max(Z) - np.min(Z)
     L     = np.sqrt(LX*LZ)*1000 # len in m
     N_max = int(2*np.round(len(X)/2)) # even numbers
+
 
     # # start with white noise with a unif. pdf:
     U = np.random.uniform(size=(N_max, N_max))
@@ -59,15 +61,16 @@ def make_synthetic_aps(X0, Z0, klim=[-3, 5], kinc=0.1, manual_amp=0, amp_ref=5.0
     dxm      = dx*1000                                             # grid size,   m
     Kny      = (1/dxm/2)*(2*np.pi)                                 # nyquist frequency * 2pi  =  max wavenumber
     # K        = np.arange(-Kny, Kny - (Kny*2)/N_max, (Kny*2)/N_max) # Get wavemenumber range
-    K        = np.arange(-Kny, Kny, (Kny*2)/N_max) # Get wavemenumber range
+    K       = np.arange(-Kny, Kny, (Kny*2)/N_max)                 # Get wavemenumber range
     KXX, KZZ = np.meshgrid(K, K)                                   # KXX and KZZ are nz*nz matrix
     K        = np.sqrt(KXX**2 + KZZ**2)                            # K in m^-1 
-
+    # print('K', K.shape)
+    # print('K2', K2.shape)
     # adjust the power-spectrum of the image Pk(k)
     aps_K  = np.fft.fftshift(np.fft.fft2(U))                         # direct Fourier transform
     aks_Kv = np.interp(K.flatten()*L, k,  Pk)                                 # fix |U(k)| = Pk(Kv)
     aps_K  = aks_Kv.reshape((N_max, N_max)) * np.exp(1j * np.angle(aps_K)) 
-    Ur  = np.real(np.fft.ifft2(np.fft.ifftshift(aps_K)))             # inverse Fourier transform
+    Ur     = np.real(np.fft.ifft2(np.fft.ifftshift(aps_K)))             # inverse Fourier transform
     # The imag part may be non-zero due to numerical error (should be ~1e-16)
 
     # Crop to desired dimentions if not square
@@ -80,14 +83,16 @@ def make_synthetic_aps(X0, Z0, klim=[-3, 5], kinc=0.1, manual_amp=0, amp_ref=5.0
 
     Ursub = Ur[:NZ0, :NX0]
 
-    # Re-scale APS amplitude 
+    # Re-scale APS amplitude to have specified average
+    # Ursub = Ursub/np.nanmax(np.abs(Ursub)) * amp_ref
+
+    # Rescale APS amplutude to have xpeficied max
     if manual_amp > 0:
         U_mean = np.mean(Ursub)                                          # Get mean
         Ursub -= U_mean                                                  # Remove mean
         Ursub  = (Ursub - np.min(Ursub))/(np.max(Ursub) - np.min(Ursub)) # Mormalize 0-1
         Ursub  = 2 * manual_amp * Ursub - manual_amp                     # Rescale to specified amplitude
         Ursub -= U_mean                                                  # Restore mean
-
         # Ursub = Ursub/np.max(np.abs(Ursub)) * manual_amp
 
     # print(U_mean, np.nanmin(Ursub), np.nanmax(Ursub))
@@ -189,3 +194,27 @@ def get_line_segment_distance(segment, point):
     dist = np.sqrt(dx**2 + dy**2)
 
     return dist
+
+
+def get_synthetic_slip(mesh, triangles, plane='east', max_slip=1, strike_scale=0.5, dip_scale=0.5, x_shift=0):
+    """
+    Get Gaussian slip distribution
+    """
+    
+    if plane == 'east':
+        i = 0
+    elif plane == 'north':
+        i = 1
+
+    X = 2*(mesh[:, i] - mesh[:, i].min())/(mesh[:, i].max() - mesh[:, i].min()) - 1
+
+    # Z = (mesh[:, 2] - mesh[:, 2].min() )/(mesh[:, 2].max() - mesh[:, 2].min())
+    Z = mesh[:, 2]
+
+    sigma       = np.array([strike_scale, dip_scale])              # widths for Gaussian slip distribution
+    slip_pts    = max_slip * np.array([np.exp(-0.5*np.array([[x0 + x_shift, z0]]) @ np.diag(1/sigma**2) @ np.array([[x0 + x_shift, z0]]).T) for x0, z0 in zip(X.flatten(), Z.flatten())]) # make gridded slip distribution, corresponding to triangle vertices
+    slip_tri    = np.mean(slip_pts[triangles], axis=1).reshape(-1) # average slip at verticies to get triangle slip
+    slip        = np.zeros((len(triangles), 3))                    # (strike-slip, dip-slip, opening)
+    slip[:, 0]  = slip_tri
+
+    return slip
