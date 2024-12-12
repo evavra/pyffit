@@ -1,1 +1,8 @@
 __pycache__/
+*.png
+*.grd
+*.h5
+*.mp4
+*.gif
+.DS_Store
+gmt.history
