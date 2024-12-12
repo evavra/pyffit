@@ -371,3 +371,74 @@ def modify_hdf5(file, key, data):
     file.create_dataset(key, data=data)
 
     return file
+
+
+def load_insar_dataset(data_dir, data_file_format, name, ref_point, data_factor=10, xkey='lon', date_index_range=[0, 8], check_lon=False, reference_time_series=True,
+                       velo_model_file='', velo_model_factor=-0.1, incremental=False,
+                       look_dir='', look_filenames=['look_e.grd', 'look_n.grd', 'look_u.grd',],):
+    
+    # Load InSAR data
+    dataset = pyffit.data.read_insar_dataset(data_dir, data_file_format, xkey=xkey, date_index_range=date_index_range, check_lon=check_lon)
+    dataset['z'] = data_factor * dataset['z'] 
+    print(dataset.date[0])
+    
+    # Get full gridded coordinates
+    lon, lat = np.meshgrid(dataset.coords['lon'], dataset.coords['lat'])
+
+    # Get reference point and convert coordinates to km
+    x_utm, y_utm = pyffit.utilities.get_local_xy_coords(lon, lat, ref_point) 
+
+    # Add Carttesian coordinates
+    dataset.coords['x'] = (('lat', 'lon'), x_utm)
+    dataset.coords['y'] = (('lat', 'lon'), y_utm)
+
+    # Reference time series to start date
+    if reference_time_series:
+        dataset['z'] = dataset['z'] - dataset['z'].isel(date=0)
+    
+    # Convert from cummulative to incremental slip
+    if incremental:
+        print('Converting data to incremental displacements')
+
+        for i in reversed(range(1, len(dataset.date) -1)):
+            print(i)
+
+            # Load the slice of data corresponding to the selected date into memory
+            z_slice = dataset['z'].isel(date=i).load()
+
+            # # Modify the data (example: add a constant value to all elements)
+            z_slice_modified = z_slice - dataset['z'].isel(date=i - 1)
+
+            # Assign the modified data back to the Dataset
+            # dataset['z'].loc[dict(date=i)] = z_slice_modified
+            dataset['z'].loc[dict(date=dataset.date[i])] = z_slice_modified
+
+            # fig, axes = plt.subplots(2, 1, figsize=(14, 8.2))
+            # axes[0].imshow(z_slice, cmap='coolwarm')
+            # axes[1].imshow(dataset['z'].loc[dict(date=i)], cmap='coolwarm')
+            # plt.show()
+            # print('huh')
+            # dataset['z'].isel(date=i) -= dataset['z'].isel(date=i-1)
+
+    # Add look vectors
+    if len(look_dir) > 0:
+        # Load look vectors
+        look = pyffit.data.read_look_vectors(look_dir, flatten=False, filenames=look_filenames)
+
+        # Add look vectors
+        dataset['look_e'] = (('lat', 'lon'), look[:, :, 0])
+        dataset['look_n'] = (('lat', 'lon'), look[:, :, 1])
+        dataset['look_u'] = (('lat', 'lon'), look[:, :, 2])
+
+    # Remove interseismic velocity model
+    if len(velo_model_file) > 0:
+        # Load velocity model
+        _, _, velo_model = pyffit.data.read_grd(velo_model_file)
+        velo_model *= velo_model_factor # Flip sign and convert to cm
+
+        # # Convert to mm and remove interseismic deformation
+        dataset['z'] = dataset['z'] - velo_model
+
+    # Add name
+    dataset.attrs["name"] = name
+    return dataset
