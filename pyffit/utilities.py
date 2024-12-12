@@ -376,3 +376,17 @@ def ongoing_run_time(message, time_prev, units='s'):
     print(f'{message} {dt:.1f} {units}')
 
     return time_now
+
+
+def get_padded_integer_string(i, i_ref):
+    """
+    Pad integer i with zeros if lower order than i_ref
+    """
+
+    order     = len(str(i))
+    order_ref = len(str(i_ref))
+
+    # if len(diff) > 1:
+    return ''.join(['0' for k in range(order_ref - order)]) + str(i)
+    
+
