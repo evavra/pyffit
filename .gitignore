@@ -4,5 +4,7 @@ __pycache__/
 *.h5
 *.mp4
 *.gif
+*.pkl
+*.h5
 .DS_Store
 gmt.history
