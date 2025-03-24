@@ -353,9 +353,10 @@ def get_downsampled_time_series(datasets, inversion_inputs, fault, n_dim, datase
         n_date = len(datasets[dataset_name].date)
 
         for k in range(0, n_date):
+            start_date = time.time()
+            
             date = datasets[dataset_name].date.values[k]
 
-            print(f'Working on {date} {k + 1}/{n_date}')
             
             # Select data for date
             data = datasets[dataset_name]['z'].isel(date=k).compute().data
@@ -370,6 +371,8 @@ def get_downsampled_time_series(datasets, inversion_inputs, fault, n_dim, datase
             # Update quadtree
             inversion_inputs[dataset_name].tree.compute_values(cells)
             d[k, :inversion_inputs[dataset_name].tree.data.size] = inversion_inputs[dataset_name].tree.data
+            end_date = time.time() - start_date
+            print(f'{date} ({k + 1}/{n_date}) completed in {end_date:.1s}')
 
         print('\n' + f'Saving time series matrix d to {file_name}')
 
