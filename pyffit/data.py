@@ -309,43 +309,6 @@ def get_data_paths(data_dir, file_format='*.grd'):
     return np.sort(glob.glob(f'{data_dir}/{file_format}'))
 
 
-def get_dates_from_files(files, index_range, return_datetime=True):
-    """
-    Extract scene dates from list of files given range of indices in filenames
-    """
-
-    # Get dates
-    dates = [file.split('/')[-1][index_range[0]:index_range[1]] for file in files]
-
-    # Return as Datetime objects if specified, otherwise just strings
-    if return_datetime:
-        return [dt.datetime.strptime(date, '%Y%m%d') for date in dates]
-    else:
-        return [f'{date[:4]}-{date[4:6]}-{date[6:]}' for date in dates]
- 
-
-def read_insar_dataset(data_dir, file_format, xkey='lon', ykey='lat', check_lon=False, date_index_range=[]):
-    """
-    Read set of NetCDF files from a directory based on specified wildcard
-    Example: /Users/evavra/Projects/SSAF/Data/InSAR/S1/timeseries/asc + ts_*_unfilt_ll.grd
-    """
-
-    # Load files
-    files   = get_data_paths(data_dir, file_format=file_format)
-    dataset = xr.open_mfdataset(files, combine='nested', concat_dim='date')
-
-    # Check format of longitude coordinates
-    if check_lon & (all(np.abs(0 <= dataset[xkey]) <= 360)):
-        dataset = dataset.assign_coords(lon=(xkey, dataset[xkey].data - 360))
-
-    # Add date dimension if specified
-    if len(date_index_range) == 2:
-        dates   = get_dates_from_files(files, date_index_range)
-        dataset = dataset.assign_coords(date=('date', dates))
-
-    return dataset
-
-
 def read_look_vectors(look_dir, filenames=['look_e.grd', 'look_n.grd', 'look_u.grd'], flatten=False):
     """
     Read east/north/up look vectors to array.
@@ -373,25 +336,87 @@ def modify_hdf5(file, key, data):
     return file
 
 
-def load_insar_dataset(data_dir, data_file_format, name, ref_point, data_factor=10, xkey='lon', date_index_range=[0, 8], check_lon=False, reference_time_series=True,
-                       velo_model_file='', velo_model_factor=-0.1, incremental=False,
-                       look_dir='', look_filenames=['look_e.grd', 'look_n.grd', 'look_u.grd',],):
+def get_index_from_files(files, index_range, use_dates=True, use_datetime=True):
+    """
+    Extract scene dates from list of files given range of indices in filenames
+    """
+
+    # Get dates
+    indices = [file.split('/')[-1][index_range[0]:index_range[1]] for file in files]
+
+    # Return as Datetime objects if specified, otherwise just strings
+    if use_dates:
+        if use_datetime:
+            return [dt.datetime.strptime(idx, '%Y%m%d') for idx in indices]
+        else:
+            return [f'{idx[:4]}-{idx[4:6]}-{idx[6:]}' for idx in indices]
+    else:
+        return indices
+
+
+def read_insar_dataset(data_dir, file_format, xkey='lon', ykey='lat', check_lon=False, date_index_range=[], use_dates=True, use_datetime=True):
+    """
+    Read set of NetCDF files from a directory based on specified wildcard
+    Example: /Users/evavra/Projects/SSAF/Data/InSAR/S1/timeseries/asc + ts_*_unfilt_ll.grd
+    """
+
+    # Load files
+    files   = get_data_paths(data_dir, file_format=file_format)
+    dataset = xr.open_mfdataset(files, combine='nested', concat_dim='date')
+
+    # Check format of longitude coordinates
+    if check_lon & (all(np.abs(0 <= dataset[xkey]) <= 360)):
+        dataset = dataset.assign_coords(lon=(xkey, dataset[xkey].data - 360))
+
+    # Add date dimension if specified
+    if len(date_index_range) == 2:
+        dates   = get_index_from_files(files, date_index_range, use_dates=use_dates, use_datetime=use_datetime)
+        dataset = dataset.assign_coords(date=('date', dates))
+
+    return dataset
+
+
+def load_insar_dataset(data_dir, data_file_format, name, ref_point, data_factor=1, xkey='lon', coord_type='geographic', date_index_range=[0, 8], check_lon=False, reference_time_series=True,
+                       velo_model_file='', velo_model_factor=-0.1, incremental=False, use_dates=True, use_datetime=True,
+                       look_dir='', look_filenames=['look_e.grd', 'look_n.grd', 'look_u.grd',], mask_file=''):
     
     # Load InSAR data
-    dataset = pyffit.data.read_insar_dataset(data_dir, data_file_format, xkey=xkey, date_index_range=date_index_range, check_lon=check_lon)
-    dataset['z'] = data_factor * dataset['z'] 
-    print(dataset.date[0])
+    dataset = read_insar_dataset(data_dir, data_file_format, xkey=xkey, date_index_range=date_index_range, check_lon=check_lon, use_dates=use_dates, use_datetime=use_datetime)
+
+    print(np.nanmean(np.abs(dataset['z'])), np.nanstd(np.abs(dataset['z'])))
+    dataset['z'] = data_factor * dataset['z']
+    print(np.nanmean(np.abs(dataset['z'])), np.nanstd(np.abs(dataset['z'])))
+
+
+    if len(mask_file) > 0:
+        # Apply mask consisting of ones and NaNs to dataset 
+        _, _, mask = read_grd(mask_file)
+        dim = dataset['z'].isel(date=0).shape
+
+        if mask.shape == dim:
+            print(f'Applying data mask from {mask_file}')
+            dataset['z'] = dataset['z'] * mask
+        else:
+            print(f'Error! Mask size ({mask.shape}) does not match data size ({dim})')
     
-    # Get full gridded coordinates
-    lon, lat = np.meshgrid(dataset.coords['lon'], dataset.coords['lat'])
+    if coord_type == 'geographic':
+        # Get full gridded coordinates
+        lon, lat = np.meshgrid(dataset.coords['lon'], dataset.coords['lat'])
 
-    # Get reference point and convert coordinates to km
-    x_utm, y_utm = pyffit.utilities.get_local_xy_coords(lon, lat, ref_point) 
+        # Get reference point and convert coordinates to km
+        x, y = get_local_xy_coords(lon, lat, ref_point) 
 
-    # Add Carttesian coordinates
-    dataset.coords['x'] = (('lat', 'lon'), x_utm)
-    dataset.coords['y'] = (('lat', 'lon'), y_utm)
-
+        # Add Carttesian coordinates
+        dataset.coords['x'] = (('lat', 'lon'), x)
+        dataset.coords['y'] = (('lat', 'lon'), y)
+    
+    elif (dataset.coords['x'].size != dataset['z'].loc[dict(date=dataset.date[0])].size) & (dataset.coords['x'].size != dataset['z'].loc[dict(date=dataset.date[0])].size):
+        print('Updating coordinates')
+        dataset = dataset.rename({'x': 'x_rng','y': 'y_rng'})
+        x, y    = np.meshgrid(dataset.coords['x_rng'], dataset.coords['y_rng'])
+        dataset.coords['x'] = (('y_rng', 'x_rng'), x)   
+        dataset.coords['y'] = (('y_rng', 'x_rng'), y)
+        
     # Reference time series to start date
     if reference_time_series:
         dataset['z'] = dataset['z'] - dataset['z'].isel(date=0)
@@ -400,8 +425,7 @@ def load_insar_dataset(data_dir, data_file_format, name, ref_point, data_factor=
     if incremental:
         print('Converting data to incremental displacements')
 
-        for i in reversed(range(1, len(dataset.date) -1)):
-            print(i)
+        for i in reversed(range(1, len(dataset.date) - 1)):
 
             # Load the slice of data corresponding to the selected date into memory
             z_slice = dataset['z'].isel(date=i).load()
@@ -410,30 +434,24 @@ def load_insar_dataset(data_dir, data_file_format, name, ref_point, data_factor=
             z_slice_modified = z_slice - dataset['z'].isel(date=i - 1)
 
             # Assign the modified data back to the Dataset
-            # dataset['z'].loc[dict(date=i)] = z_slice_modified
             dataset['z'].loc[dict(date=dataset.date[i])] = z_slice_modified
-
-            # fig, axes = plt.subplots(2, 1, figsize=(14, 8.2))
-            # axes[0].imshow(z_slice, cmap='coolwarm')
-            # axes[1].imshow(dataset['z'].loc[dict(date=i)], cmap='coolwarm')
-            # plt.show()
-            # print('huh')
-            # dataset['z'].isel(date=i) -= dataset['z'].isel(date=i-1)
 
     # Add look vectors
     if len(look_dir) > 0:
         # Load look vectors
-        look = pyffit.data.read_look_vectors(look_dir, flatten=False, filenames=look_filenames)
+        look = read_look_vectors(look_dir, flatten=False, filenames=look_filenames)
+    else:
+        look = np.ones((dataset['z'].shape[2], dataset['z'].shape[1], 3))
 
-        # Add look vectors
-        dataset['look_e'] = (('lat', 'lon'), look[:, :, 0])
-        dataset['look_n'] = (('lat', 'lon'), look[:, :, 1])
-        dataset['look_u'] = (('lat', 'lon'), look[:, :, 2])
+    # Add look vectors
+    dataset['look_e'] = (('y', 'x'), look[:, :, 0])
+    dataset['look_n'] = (('y', 'x'), look[:, :, 1])
+    dataset['look_u'] = (('y', 'x'), look[:, :, 2])
 
     # Remove interseismic velocity model
     if len(velo_model_file) > 0:
         # Load velocity model
-        _, _, velo_model = pyffit.data.read_grd(velo_model_file)
+        _, _, velo_model = read_grd(velo_model_file)
         velo_model *= velo_model_factor # Flip sign and convert to cm
 
         # # Convert to mm and remove interseismic deformation

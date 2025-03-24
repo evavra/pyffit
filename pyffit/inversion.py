@@ -9,6 +9,13 @@ import matplotlib
 import corner
 from multiprocessing import Pool
 from scipy.optimize import lsq_linear
+import h5py
+import time
+import pickle
+from scipy.integrate import solve_ivp
+# from matplotlib.lines import Line2D
+from pyffit.quadtree import ResQuadTree
+
 
 # -------------------------- Classes --------------------------
 class LinearInversion:
@@ -25,7 +32,7 @@ class LinearInversion:
     LinearInversion.run() - perform linear inversion
     """
 
-    def __init__(self, fault, dataset_dict, verbose=True):
+    def __init__(self, fault, dataset_dict, smoothing=False, edge_slip=False, verbose=True):
 
         # Form inversion inputs
         self.datasets         = dataset_dict
@@ -35,18 +42,32 @@ class LinearInversion:
 
         # ------------------ Perform inversion ------------------
         # Form full design matrix
-        self.G = np.vstack((self.greens_functions, fault.mu*fault.smoothing_matrix, fault.eta*fault.edge_slip_matrix)) # Add regularization        
-        self.d = np.hstack((self.data, np.zeros(fault.smoothing_matrix.shape[0] + fault.edge_slip_matrix.shape[0]))) # Pad data vector with zeros
+        self.G = self.greens_functions
+        self.d = self.data
 
-    def run(self, slip_lim=(-np.inf, np.inf)):
+        if smoothing:
+            if verbose:
+                print(f'Using smoothing regularization value of {fault.mu:.1e}')
+            self.G = np.vstack((self.G, fault.mu*fault.smoothing_matrix)) # Add regularization        
+            self.d = np.hstack((self.d, np.zeros(fault.smoothing_matrix.shape[0]))) # Pad data vector with zeros
+
+        if edge_slip:
+            if verbose:
+                print(f'Using edge slip regularization value of {fault.eta:.1e}')
+            self.G = np.vstack((self.G, fault.eta*fault.edge_slip_matrix)) # Add regularization        
+            self.d = np.hstack((self.data, np.zeros(fault.edge_slip_matrix.shape[0]))) # Pad data vector with zeros
+
+
+    def run(self, slip_lim=(-np.inf, np.inf), lsq_kwargs={}):
         """
         Perform least-squares solve and update internal InversionDataset objects
         """
 
         # Solve using bounded least squares to enforce slip direction constraint
         start      = time.time()
-        results    = lsq_linear(self.G, self.d, bounds=slip_lim)
-        slip_model = np.column_stack((results.x, np.zeros_like(results.x), np.zeros_like(results.x)))
+        results    = lsq_linear(self.G, self.d, bounds=slip_lim, **lsq_kwargs).x
+        # results, _, _, _    = np.linalg.lstsq(self.G, self.d, rcond=-1)
+        slip_model = np.column_stack((results, np.zeros_like(results), np.zeros_like(results)))
         end        = time.time() - start
 
         # Print run time
@@ -69,12 +90,13 @@ class InversionDataset:
     Class for organizing data and results for finite slip inversions.
     """
 
-    def __init__(self, tree, greens_functions):
+    def __init__(self, tree, greens_functions, verbose=False):
         """
         Add input data and Green's functions to input to inverion
         """
         self.tree = tree
         self.greens_functions = greens_functions
+        self.verbose = verbose
 
     def add_results(self, slip_model):
         """
@@ -89,7 +111,110 @@ class InversionDataset:
         self.rms        = np.sqrt(np.sum(self.resids**2)/len(self.resids))
 
         self.model_time = end
-        print(f'Model time: {200*self.model_time:.5f}')
+        
+        if self.verbose:
+            print(f'Model time: {self.model_time:.5f}')
+
+
+# -------------------------- Main methods --------------------------
+def get_inversion_inputs(fault, datasets, quadtree_params={}, date=-1, LOS=False, disp_components=[0, 1, 2], slip_components=[0, 1, 2], rotation=np.nan, squeeze=False,
+                         run_dir='.', quadtree_file_stem='_quadtree.pkl', greenfunc_file_stem='_greens_functions.h5', verbose=False):
+    """
+    Prepare data to be ingested by inversion
+
+    INPUT:
+    fault            - TriFault object
+    datasets         - dictionary containing Xarray multi-file dataset(s)
+    quadtree_params  - dictionary of quadtree parameters
+    rotation         - (np.nan)
+    """
+
+    start = time.time()
+
+    inputs = {}
+
+    # Loop over datasets to generate InversionDataset objects
+    for key in datasets.keys():
+
+        # Select current data grid
+        data = datasets[key]['z'].isel(date=date).compute().data
+
+        print('\n' + f'######### Working on {key}... #########')
+        
+        # ---------- Downsampling ----------
+        # Load existing quadtree or perform downsampling and save to disk 
+        quadtree_file = f'{run_dir}/{key}{quadtree_file_stem}'
+        look          = np.array([datasets[key]['look_e'].compute().data.flatten(), datasets[key]['look_n'].compute().data.flatten(), datasets[key]['look_u'].compute().data.flatten()]).T
+
+        if os.path.exists(quadtree_file):
+
+            # Load existing structure
+            with open(quadtree_file, 'rb') as f:
+                tree = pickle.load(f)
+
+                # Check to see if parameters are the same, if not redo
+                if tree.check_parameters(quadtree_params) == False:
+                    print('\nRedoing downsampling')
+                    tree = ResQuadTree(datasets[key].coords['x'].compute().data.flatten(), datasets[key].coords['y'].compute().data.flatten(), data.flatten(), look, np.arange(0, datasets[key].coords['x'].size), fault, verbose=verbose, **quadtree_params, )
+                    tree.write(quadtree_file)
+                else:
+                    print('\nLoading quadtree')
+
+        else:
+            tree = ResQuadTree(datasets[key].coords['x'].compute().data.flatten(), datasets[key].coords['y'].compute().data.flatten(), data.flatten(), look, np.arange(0, datasets[key].coords['x'].size), fault, verbose=verbose, **quadtree_params)
+            tree.write(quadtree_file)
+
+        # Print parameter values
+        tree.display_parameters(quadtree_params)
+        print('\n' + f'Quadtree points: {len(tree.data)}')
+
+        # ---------- Green's functions ------------------
+        if LOS != True:
+            look = []
+
+        # Load or generate Green's functions
+        greens_function_file = f'{run_dir}/{key}{greenfunc_file_stem}'
+
+        if os.path.exists(greens_function_file):
+            # Load existing Green's Functions
+            gfile = h5py.File(greens_function_file, 'r')
+            GF = gfile['GF'][()]
+            gfile.close()
+
+            if GF.shape[0] != tree.x.shape[0]:
+                print('\n' + "Redoing Green's functions")
+
+                # Generate LOS Green's functions for dowmsampled coordinates
+                # GF = fault.LOS_greens_functions(tree.x, tree.y, tree.look)
+                GF = fault.greens_functions(tree.x, tree.y, look=look, disp_components=disp_components, slip_components=slip_components, rotation=rotation, squeeze=squeeze)
+
+                # Save to disk
+                gfile = h5py.File(greens_function_file, 'w')
+                gfile.create_dataset('GF', data=GF)
+                gfile.close()
+                print('\n' + f"Green's functions saved to {greens_function_file}")
+            else:
+                print('\n' + "Loading Green's functions")
+
+        else:
+            # Generate LOS Green's functions for dowmsampled coordinates
+            # GF = fault.LOS_greens_functions(tree.x, tree.y, tree.look)
+            GF = fault.greens_functions(tree.x, tree.y, look=look, disp_components=disp_components, slip_components=slip_components, rotation=rotation, squeeze=squeeze)
+
+            # Save to disk
+            gfile = h5py.File(greens_function_file, 'w')
+            gfile.create_dataset('GF', data=GF)
+            gfile.close()
+            print('\n' + f"Green's functions saved to {greens_function_file}")
+
+        # Include only strike-slip contribution
+        inputs[key] = InversionDataset(tree, GF)    
+
+    end = time.time() - start 
+    print('\n' + f'Data prep time: {end:.2f} s')
+
+    return inputs
+
 
 # -------------------------- Probability methods --------------------------
 def cost_function(m, coords, d, S_inv, model):
@@ -392,27 +517,6 @@ def mcmc(priors, log_prob, out_dir, m0=[], init_mode='uniform', moves=[emcee.mov
 
 
 # -------------------------- Kalman Filter --------------------------
-import os
-import h5py
-import time
-import emcee
-import numba
-import numpy as np
-import matplotlib.pyplot as plt
-from scipy.integrate import solve_ivp
-from scipy.optimize import least_squares
-from matplotlib.lines import Line2D
-from multiprocessing import Pool
-
-def main():
-    """
-    Functions for SIOG 239 - Advanced Inverse Theory (WI22).
-    """
-    HW_6()
-    return
-
-
-# -------------------- ASSIGNMENTS -------------------- 
 def EnKF_driver():
     # Load results from previous HWs
     (B, F, J, R, T, U, l, mu_0, n_x, n_y, t, t_B, t_T, t_T_hat, x, x_0, x_0_hat, x_B, x_T, x_T_hat, x_attractor, x_s, y) = load_results('HW_1')

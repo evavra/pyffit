@@ -1,12 +1,14 @@
 import os 
 import time 
+import h5py
 import numba 
 import numpy as np
 # from okada_wrapper
 import cutde.halfspace as HS
 from scipy.interpolate import interp1d
-import h5py
 from itertools import combinations
+from pyffit.utilities import rotate
+import matplotlib.pyplot as plt
 
 # ---------- Classes ----------
 class TriFault:
@@ -19,7 +21,7 @@ class TriFault:
     """
 
     def __init__(self, mesh_file, triangle_file, slip=[], slip_components=[0, 1, 2], poisson_ratio=0.25, shear_modulus=30e9, mu=0, eta=0, reg_matrix_dir='.', 
-                 verbose=True, trace_inc=0.01, N_data=True):
+                 verbose=False, trace_inc=0.01, N_data=True):
         """
         Instantiate TriFault object
         """
@@ -85,16 +87,19 @@ class TriFault:
         self.edge_slip_matrix = E
 
 
-    def greens_functions(self, x, y, z=[]):
+    def greens_functions(self, x, y, z=[], look=[], disp_components=[0, 1, 2], slip_components=[0, 1, 2], rotation=np.nan, squeeze=True):
         """
         Compute fault Green's functions for given data coordinates and fault model.
     
         INPUT:
-        x, y - coordinates for Green's function locations
+        x, y            - coordinates for Green's function locations
+        disp_components -  slip components to use [0 for east, 1 for north, 2 for vertical] 
+                           if rotating into strike coordiantes, it is [0 for fault-perpendicular, 1 for fault-parallel, 2 for vertical]
+        slip_components -  slip components to use [0 for strike-slip, 1 for dip-slip, 2 for opening]
+
         OUTPUT:
         GF - array containing Green's functions for each fault element for each data point 
-             Dimensions: N_OBS_PTS, 3 (E/N/Z), N_SRC_TRIS, 3 (srike-slip/dip-slip/opening)
-
+             Dimensions: N_OBS_PTS, 3 (E/N/Z), N_SRC_TRIS, 3 (srike-slip/dip-slip/opening)]
         """
 
         # Start timer
@@ -107,16 +112,80 @@ class TriFault:
         pts = np.array([x, y, z]).reshape((3, -1)).T.copy() # Convert observation coordinates into row-matrix
         GF  = HS.disp_matrix(obs_pts=pts, tris=self.patches, nu=self.poisson_ratio) # (N_OBS_PTS, 3, N_SRC_TRIS, 3)
 
+        # Select which slip components to use
+        if len(slip_components) < 3:
+            print(f'Using slip components {slip_components}')
+            GF = GF[:, :, :, slip_components] 
+
+        # If specified, project into LOS
+        if len(look) == len(x):
+            print('Projecting to LOS...')
+            GF = self.proj_to_LOS(GF, look)
+
+        elif (len(look) != 0):
+            print('Error! Look vectors are wrong dimension')
+            print(f'GF:   {GF.shape}')
+            print(f'Look: {look.shape}')
+            return
+        
+        # If not, rotate Greens functions and/or select displacement components to retur
+        else:
+            # Rotate horizontal components according to specified angle
+            if (~np.isnan(rotation)) :
+                print(f"Projecting Green's functions to {rotation} degrees")
+                GF[:, 0, :, :], GF[:, 1, :, :] = rotate(GF[:, 0, :, :], GF[:, 1, :, :], np.deg2rad(rotation))
+
+            # Select which displacement components to use
+            if len(disp_components) < 3:
+                print(f'Using displacement components {disp_components}')
+                GF = GF[:, disp_components, :, :] 
+
+        # Squeeze
+        if squeeze:
+            print('Squeezing')
+            GF = np.squeeze(GF)
+
         # Stop timer
         end = time.time() - start
 
         # Display info
         if self.verbose:
-            print(f"Green's function array size:       {GF.reshape((-1, self.triangles.size)).shape} {GF.size:.1e} elements")
+            # print(f"Green's function array size:       {GF.reshape((-1, self.triangles.size)).shape} {GF.size:.1e} elements")
+            print(f"Green's function array size:       {GF.shape} {GF.size:.1e} elements")
             print(f"Green's function computation time: {end:.2f}")
 
         return GF
 
+
+    def proj_to_LOS(self, GF, look):
+        """
+        Project fault Green's functions into direction specfied by input vectors
+
+        INPUT:
+        GF (n_obs, 3, n_patch, 3) - array of Green's functions (observations, disp. components, patches, slip components) 
+        look (n_obs, 3)           - array of unit vector components
+
+        OUTPUT:
+        G_LOS (n_obs, n_patch, 3) - LOS Green's functions
+        """ 
+
+        start = time.time()
+
+        GF_LOS = np.empty((GF.shape[0], GF.shape[2], GF.shape[3]))
+
+        for i in range(GF.shape[0]):
+            for j in range(GF.shape[2]):
+                for k in range(GF.shape[3]):
+                    GF_LOS[i, j, k] = np.dot(GF[i, :, j, k], look[i, :])
+        
+        end = time.time() - start
+
+        if self.verbose:
+            print(f"LOS Green's function array size:      {GF_LOS.shape} {GF_LOS.size:.1e} elements")
+            print(f"LOS Green's function computation time: {end:.2f}")
+
+        return GF_LOS
+    
 
     def LOS_greens_functions(self, x, y, look):
         """
@@ -141,7 +210,6 @@ class TriFault:
         for i in range(GF.shape[0]):
             for j in range(GF.shape[2]):
                 for k in range(n_comp):
-
                     GF_LOS[i, j, k] = np.dot(GF[i, :, j, k], look[i, :])
         
         end = time.time() - start
@@ -153,13 +221,86 @@ class TriFault:
         return GF_LOS
 
 
-    def resolution_matrix(self, x, y, look):
+    def resolution_matrix(self, x, y, look=[], rotation=np.nan, disp_components=[0, 1, 2], slip_components=[0, 1, 2], smoothing=True, edge_slip=True, squeeze=False, mode='data'):
         """
-        Compute data resolution matrix for a given set of observation coordinates and fault mesh.
+        Compute data or model resolution matrix for a given set of observation coordinates and fault mesh.
         """
 
         # Compute Greens Functions
-        # GF = get_fault_greens_functions(x, y)
+        if len(look) == 0:
+            G = np.squeeze(self.greens_functions(x, y, look=look, rotation=rotation, disp_components=disp_components, slip_components=slip_components, squeeze=squeeze))
+
+        # # Project to LOS
+        # else:
+        #     GF = np.squeeze(self.LOS_greens_functions(x, y, look))
+
+        # Add regularization  
+        if smoothing:
+            G = np.vstack((G, self.mu*self.smoothing_matrix))  
+        if edge_slip:
+            G = np.vstack((G, self.eta*self.edge_slip_matrix))  
+
+        # R = self.mu*self.smoothing_matrix
+        # L = self.eta*self.edge_slip_matrix
+        # G = np.vstack((GF, R, L))  
+        # G = np.vstack((GF, self.mu*self.smoothing_matrix)) 
+        # G = make_observation_matrix(GF, self.mu*self.smoothing_matrix)
+
+        def plot_matrix(A, name):
+
+            vlim = np.max(np.abs(A))
+            fig, ax = plt.subplots(figsize=(10, 10 * A.shape[0]/A.shape[1]))
+            ax.set_title(f'Dimensions:  {A.shape} ({A.size}) | Avg {A.max():.3f} {A.std():.3f} | Range {A.min():.3f} {A.max():.3f}')
+            im = ax.imshow(A, vmin=-vlim, vmax=vlim, cmap='coolwarm', interpolation='none')
+            plt.colorbar(im)
+            plt.savefig(f'/Users/evavra/Software/pyffit/tests/NIF/Resolution_G_matrix/{name}_matrix_{A.shape[0]}x{A.shape[1]}.png', dpi=300)
+            plt.close()
+
+            return
+
+        # Compute the generalized inverse of the Greens functions
+        GtG     = G.T @ G
+        # GtG_inv = np.linalg.solve(GtG, np.eye(len(GtG)))
+        GtG_inv = np.linalg.pinv(GtG)
+        G_g     = GtG_inv @ G.T
+
+        # # Perform SVD
+        # V, S, U = np.linalg.svd(G_g, full_matrices=True)
+        # a = np.hstack((np.diag(S**-1), np.zeros((len(S), len(U) - len(S)))))
+        # b = np.vstack((np.diag(S), np.zeros((len(U) - len(S), len(S)))))
+        # N_SVD = (V @ a @ U.T) @ (U @ b @ V.T)
+
+        # fig, ax = plt.subplots(figsize=(14, 8.2))
+        # ax.set_title(f'Avg {S.mean():.3f} {S.std():.3f} | Range {S.min():.3f} {S.max():.3f}')
+        # ax.plot(S)
+        # plt.show()
+
+        # plot_matrix(GF, 'GF')
+        # plot_matrix(R, 'R')
+        # plot_matrix(L, 'L')
+        # plot_matrix(G_g, 'G_g')
+        # plot_matrix(N_SVD, 'N_SVD')
+
+        if mode =='model':
+            N = G_g @ G
+
+        # Data resolution matrix
+        else:
+            # Compute resolution matrix
+            N = G @ G_g
+
+            if self.N_data:
+                N = N[:len(x), :len(x)] # ignore rows corresponding to regularization terms
+
+        return N
+
+
+    def model_resolution_matrix(self, x, y, look, mode='data'):
+        """
+        Compute model resolution matrix for a given set of observation coordinates and fault mesh.
+        """
+
+        # Compute Greens Functions
 
         # Project to LOS
         GF_LOS = np.squeeze(self.LOS_greens_functions(x, y, look))
@@ -172,17 +313,44 @@ class TriFault:
         GtG_inv = np.linalg.solve(GtG, np.eye(len(GtG)))
         G_g     = GtG_inv @ G.T
 
-        # Compute resolution matrix
-        N = G @ G_g
 
-        if self.N_data:
-            N = N[:len(look), :len(look)] # ignore rows corresponding to regularization terms
+        if mode =='model':
+            N = G_g @ G
+
+        # Data resolution matrix
+        else:
+            # Compute resolution matrix
+            N = G @ G_g
+
+            if self.N_data:
+                N = N[:len(look), :len(look)] # ignore rows corresponding to regularization terms
+
         return N
-
+    
 
     def update_slip(self, slip):
         self.slip = slip
         self.moment, self.magnitude = get_moment_magnitude(self.mesh, self.triangles, self.slip, shear_modulus=self.shear_modulus)
+
+
+def make_observation_matrix(G, R, t=1):
+    """
+    Form observation from Greens function matrix G and smoothing matrix R.
+    """
+
+    zeros_G = np.zeros_like(G)
+    zeros_R = np.zeros_like(R)
+
+    # Form rows
+    data         = np.hstack((  G * t,       G, zeros_G))
+    v_smooth     = np.hstack((      R, zeros_R, zeros_R))
+    W_smooth     = np.hstack((zeros_R,       R, zeros_R))
+    W_dot_smooth = np.hstack((zeros_R, zeros_R,       R))
+
+    H            = np.vstack((data, v_smooth, W_smooth, W_dot_smooth))
+
+    return H
+
 
 class Fault:
     """
@@ -320,6 +488,7 @@ class Fault:
         """
 
         return sum([np.sqrt((self.trace.x[i + 1] - self.trace.x[i])**2 + (self.trace.y[i + 1] - self.trace.y[i])**2) for i in range(len(self.trace.x) - 1)]) 
+
 
 class Patch:
     """
@@ -574,7 +743,6 @@ class Trace:
 
 
 # ---------- Methods ----------
-
 @numba.jit(nopython=True)
 def rotate(x, y, theta): 
     """

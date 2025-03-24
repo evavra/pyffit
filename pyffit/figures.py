@@ -31,6 +31,7 @@ region    = []
 cmap      = cmc.roma
 figsize   = (14, 8.2)
 
+
 def animation():
     # Define the figure and axis
     fig, ax = plt.subplots()
@@ -68,6 +69,7 @@ def animation():
     print(f"Animation saved as {output_file}")
 
     return
+
 
 def intf_panels(intf_paths, data_type, labels, mask=False, corr_min=None, grid_dims=None, figsize=(14, 8.2), cmap=cmc.roma):
     """
@@ -394,7 +396,7 @@ def plot_grid_map(data, extent, region=[], fig_ax=(), projection=ccrs.PlateCarre
 
 def plot_fault_3d(mesh, triangles, c=[], fig_ax=[], edges=False, cmap_name='viridis', cbar_label='Slip (m)', 
                   labelpad=20, azim=45, elev=10, n_seg=100, n_tick=11, alpha=1, vlim_slip=[], title='', 
-                  filename='', show=True, dpi=500, invert_zaxis=False, edge_kwargs=dict(edgecolor='k', linewidth=0.25),
+                  file_name='', show=True, dpi=500, invert_zaxis=False, edge_kwargs=dict(edgecolor='k', linewidth=0.25),
                   figsize=(14, 8.2), cbar_kwargs=dict(location='bottom', pad=-0.1, shrink=0.5)):
     """
     Make 3D plot of finite fault model.
@@ -477,8 +479,8 @@ def plot_fault_3d(mesh, triangles, c=[], fig_ax=[], edges=False, cmap_name='viri
     ax.view_init(azim=azim, elev=elev)
     fig.suptitle(title)
     fig.tight_layout()
-    if len(filename) > 0:
-        plt.savefig(filename, dpi=dpi)
+    if len(file_name) > 0:
+        plt.savefig(file_name, dpi=dpi)
 
     if show:
         plt.show()
@@ -487,9 +489,9 @@ def plot_fault_3d(mesh, triangles, c=[], fig_ax=[], edges=False, cmap_name='viri
     return fig, ax
 
 
-def plot_fault_panels(panels, mesh, triangles, slip, figsize=(14, 8.2), orientation='horizontal', cmap_disp='coolwarm', cmap_slip='viridis', x_ax='east', 
-                      fault_lim='mesh', title='', markersize=10, trace=False, vlim_disp=[], vlim_slip=[], xlim=[], ylim=[],  n_tick=11, n_seg=10, mu=0, eta=0, 
-                      filename='', show=False, dpi=300):
+def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), orientation='horizontal', cmap_disp='coolwarm', x_ax='east', fault_height=0.5, 
+                      fault_lim='mesh', title='', fault_label='', markersize=10, trace=False, vlim_disp=[], vlim_slip=[], xlim=[], ylim=[],  n_tick=11, n_seg=10, mu=0, eta=0, 
+                      file_name='', show=False, dpi=300):
     """
     Plot three displacement panels above side-view of fault model.
     """
@@ -503,83 +505,82 @@ def plot_fault_panels(panels, mesh, triangles, slip, figsize=(14, 8.2), orientat
 
     # Set up figure and axes
     fig   = plt.figure(figsize=figsize)
+    fig.suptitle(title)
 
     if orientation == 'horizontal':
-        gs    = fig.add_gridspec(2, 4, width_ratios=(1, 1, 1, 0.05), height_ratios=(1, 1))
-        ax0   = fig.add_subplot(gs[0, 0])
-        ax1   = fig.add_subplot(gs[0, 1])
-        ax2   = fig.add_subplot(gs[0, 2])
-        ax3   = fig.add_subplot(gs[1, :-1])
-        cax0  = fig.add_subplot(gs[0, 3])
-        cax1  = fig.add_subplot(gs[1, -1])
-        ax0.set_ylabel('North (km)')
-        ax0.set_xlabel('East (km)')
-        ax1.set_xlabel('East (km)')
-        ax2.set_xlabel('East (km)')
+        gs    = fig.add_gridspec(len(fault_panels) + 1, 4, width_ratios=(1, 1, 1, 0.05), height_ratios=[1] + [fault_height for i in range(len(fault_panels))])
+        # ax0   = fig.add_subplot(gs[0, 0])
+        # ax1   = fig.add_subplot(gs[0, 1])
+        # ax2   = fig.add_subplot(gs[0, 2])
+        # ax3   = fig.add_subplot(gs[1, :-1])
+
+        # cax0  = fig.add_subplot(gs[0, 3])
+        # cax1  = fig.add_subplot(gs[1, -1])
+
+        data_axes  = [fig.add_subplot(gs[0, i]) for i in range(3)]
+        fault_axes = [fig.add_subplot(gs[i + 1, :-1]) for i in range(len(fault_panels))]
+        caxes      = [fig.add_subplot(gs[i, -1]) for i in range(len(fault_panels) + 1)]
+
+        data_axes[0].set_ylabel('North (km)')
+
+        for ax in data_axes:
+            ax.set_xlabel('East (km)')
 
     elif orientation == 'vertical':
-        gs    = fig.add_gridspec(4, 2, width_ratios=(1, 0.025), height_ratios=(1, 1, 1, 1))
-        ax0   = fig.add_subplot(gs[0, 0])
-        ax1   = fig.add_subplot(gs[1, 0])
-        ax2   = fig.add_subplot(gs[2, 0])
-        ax3   = fig.add_subplot(gs[3, 0])
-        cax0  = fig.add_subplot(gs[1, 1])
-        cax1  = fig.add_subplot(gs[3, 1])
+        gs    = fig.add_gridspec(3 + len(fault_panels), 2, width_ratios=(1, 0.025), height_ratios=[1 for i in range(len(panels))] + [fault_height for i in range(len(fault_panels))])
+        # ax0   = fig.add_subplot(gs[0, 0])
+        # ax1   = fig.add_subplot(gs[1, 0])
+        # ax2   = fig.add_subplot(gs[2, 0])
+        # ax3   = fig.add_subplot(gs[3, 0])
+        # cax0  = fig.add_subplot(gs[1, 1])
+        # cax1  = fig.add_subplot(gs[3, 1])
+
+        data_axes  = [fig.add_subplot(gs[i, 0]) for i in range(3)]
+        fault_axes = [fig.add_subplot(gs[3 + i, 0]) for i in range(len(fault_panels))]
+        caxes      = [fig.add_subplot(gs[i, 1]) for i in range(3 + len(fault_panels))]
 
         # labels
-        ax0.set_ylabel('North (km)')
-        ax1.set_ylabel('North (km)')
-        ax2.set_ylabel('North (km)')
-        ax3.set_xlabel(xlabel)
-        ax3.set_ylabel('Depth (km)')
+        for ax in data_axes:
+            ax.set_ylabel('North (km)')
+            ax.set_xticklabels([])
 
-        # ticks
-        ax0.set_xticklabels([])
-        ax1.set_xticklabels([])
-        ax2.set_xticklabels([])
+        data_axes[2].set_xlabel(xlabel)
 
-    axes  = [ax0, ax1, ax2, ax3]
-    caxes = [cax0, cax1]
-
-    # Set up colorbar for fault slip
-    alpha = 1
-    edges = True
-    cvar  = slip
-
-
-
-    if len(vlim_slip) == 0:
-        vmin = slip.min()
-        vmax = slip.max()
-    else:
-        vmin = vlim_slip[0]
-        vmax = vlim_slip[1]
-
-    ticks = np.linspace(vmin, vmax, n_tick)
-    cval  = (cvar - vmin)/(vmax - vmin) # Normalized color values
-    cmap  = matplotlib.colors.LinearSegmentedColormap.from_list(cmap_slip, plt.get_cmap(cmap_slip, 265)(np.linspace(0, 1, 265)), n_seg)
-    sm    = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=vmin, vmax=vmax))
-    c     = cmap(cval)
+        for ax in fault_axes:
+            ax.set_ylabel('Depth (km)')
 
     all_x = []
     all_y = []
 
     if len(vlim_disp) == 0:
-        all_data  = np.concatenate((panels[0]['data'].flatten(), panels[1]['data'].flatten(), panels[2]['data'].flatten()))
-        vlim_disp = 0.7*np.nanmax(np.abs(all_data))
+        vmin_disp = [panel['data'].min() for panel in panels]
+        vmax_disp = [panel['data'].max() for panel in panels]
 
-    # Plot displacement panels
+    elif len(vlim_disp) == 2:
+        vmin_disp = [vlim_disp[0] for panel in panels]
+        vmax_disp = [vlim_disp[1] for panel in panels]
+
+    else:
+        vmin_disp = [vlim[0] for vlim in vlim_disp]
+        vmax_disp = [vlim[1] for vlim in vlim_disp]
+
+    # if len(vlim_disp) == 0:
+    #     all_data  = np.concatenate((panels[0]['data'].flatten(), panels[1]['data'].flatten(), panels[2]['data'].flatten()))
+    #     vlim_disp = 0.7*np.nanmax(np.abs(all_data))
+
+    # ---------------------------------------- Displacement panels ----------------------------------------
     for i in range(3):
         panel = panels[i]
         data  = panel['data']
         label = panel['label']
 
         if len(data.shape) == 2:
+            # print(data.shape)
             extent = panel['extent']
             all_x.extend([extent[0], extent[1]])
             all_y.extend([extent[3], extent[2]])
 
-            im = axes[i].imshow(data, extent=extent, vmin=vlim_disp[0], vmax=vlim_disp[1], cmap=cmap_disp, interpolation='none')
+            im = data_axes[i].imshow(data, extent=extent, vmin=vmin_disp[i], vmax=vmax_disp[i], cmap=cmap_disp, interpolation='none')
 
         else:
             x = panel['x']
@@ -588,9 +589,15 @@ def plot_fault_panels(panels, mesh, triangles, slip, figsize=(14, 8.2), orientat
             all_x.extend([x.min(), x.max()])
             all_y.extend([y.min(), y.max()])
 
-            im = axes[i].scatter(x, y, c=data, vmin=vlim_disp[0], vmax=vlim_disp[1], cmap=cmap_disp, marker='.', s=markersize)
-            axes[i].set_aspect(1)
+            im = data_axes[i].scatter(x, y, c=data, vmin=vmin_disp[i], vmax=vmax_disp[i], cmap=cmap_disp, marker='.', s=markersize)
+            data_axes[i].set_aspect(1)
 
+        if orientation == 'horizontal':
+            k = 0
+        else:
+            k = i
+
+        fig.colorbar(im, cax=caxes[k], label='Displacement (mm)', shrink=0.05)
 
     # Get axes limits
     if len(xlim) == 0:
@@ -599,41 +606,58 @@ def plot_fault_panels(panels, mesh, triangles, slip, figsize=(14, 8.2), orientat
     if len(ylim) == 0:
         ylim = [np.nanmin(all_y), np.nanmax(all_y)]
 
-    # Plot fault
+    # Plot fault trace
     for i in range(3):
+        data_axes[i].plot(mesh[:, 0][mesh[:, 2] == 0], mesh[:, 1][mesh[:, 2] == 0], linewidth=1, c='k')
 
-        # for z in np.unique(mesh[:, 2]):
-            # axes[i].plot(mesh[:, 0][mesh[:, 2] == z], mesh[:, 1][mesh[:, 2] == z], linewidth=2)
-        axes[i].plot(mesh[:, 0][mesh[:, 2] == 0], mesh[:, 1][mesh[:, 2] == 0], linewidth=1, c='k')
+        data_axes[i].set_title(panels[i]['label'])
+        data_axes[i].set_xlim(xlim)
+        data_axes[i].set_ylim(ylim)
 
-        axes[i].set_title(panels[i]['label'])
-        axes[i].set_xlim(xlim)
-        axes[i].set_ylim(ylim)
+    # ---------------------------------------- Fault panels ----------------------------------------
+    for i in range(len(fault_panels)):
 
-    # Plot fault mesh and slip distribution
-    for tri, c0 in zip(triangles, c):
-        pts = mesh[tri]
+        panel = fault_panels[i]
 
-        # Plot triangles
-        face = Polygon(list(zip(pts[:, x_idx], pts[:, 2])), color=c0, alpha=alpha, linewidth=0.1)
-        ax3.add_patch(face)
+        # Set up colorbar for fault slip
+        alpha = 1
+        edges = True
+        cvar  = panel['slip']
+        vmin  =  panel['vlim'][0]
+        vmax  =  panel['vlim'][1]
 
-        edges = Polygon(list(zip(pts[:, x_idx], pts[:, 2])), edgecolor='k', facecolor='none', alpha=1, linewidth=0.5)
-        ax3.add_patch(edges)
-            
-    # Axis settings
-    if fault_lim == 'mesh':
-        ax3.set_xlim(mesh[:, x_idx].min(), mesh[:, x_idx].max())
-        ax3.set_ylim(mesh[:, 2].min(), mesh[:, 2].max())
+        ticks = np.linspace(vmin, vmax, n_tick)
+        cval  = (cvar - vmin)/(vmax - vmin) # Normalized color values
+        cmap  = matplotlib.colors.LinearSegmentedColormap.from_list(panel['cmap'], plt.get_cmap(panel['cmap'], 265)(np.linspace(0, 1, 265)), n_seg)
+        sm    = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=vmin, vmax=vmax))
+        c     = cmap(cval)
 
-    elif fault_lim == 'map':
-        ax3.set_xlim(xlim)
-        ax3.set_ylim(ylim[0] - ylim[1], 0)
+        # Plot fault meshes and slip distributions
+        for tri, c0 in zip(triangles, c):
+            pts = mesh[tri]
 
-    ax3.set_aspect(1)
+            # Plot triangles
+            face = Polygon(list(zip(pts[:, x_idx], pts[:, 2])), color=c0, alpha=alpha, linewidth=0.1)
+            fault_axes[i].add_patch(face)
 
-    fig.colorbar(im, cax=cax0, label='Displacement (mm)', shrink=0.05)
-    fig.colorbar(sm, cax=cax1, label='Slip (mm)')
+            edges = Polygon(list(zip(pts[:, x_idx], pts[:, 2])), edgecolor='k', facecolor='none', alpha=1, linewidth=0.5)
+            fault_axes[i].add_patch(edges)
+                
+        # Axis settings
+        if fault_lim == 'mesh':
+            fault_axes[i].set_xlim(mesh[:, x_idx].min(), mesh[:, x_idx].max())
+            fault_axes[i].set_ylim(mesh[:, 2].min(), mesh[:, 2].max())
+
+        elif fault_lim == 'map':
+            fault_axes[i].set_xlim(xlim)
+            fault_axes[i].set_ylim(ylim[0] - ylim[1], 0)
+
+        fault_axes[i].set_aspect(1)
+        fault_axes[i].set_title(panel['title'])
+
+        fig.colorbar(sm, cax=caxes[k + i + 1], label=panel['label'])
+
+    # Finish up
     fig.tight_layout()
 
     if len(file_name) > 0:
@@ -644,7 +668,7 @@ def plot_fault_panels(panels, mesh, triangles, slip, figsize=(14, 8.2), orientat
 
     plt.close()
 
-    return fig, axes
+    return fig
 
 
 def plot_quadtree(data, extent, samp_coords, samp_data, 
@@ -779,9 +803,10 @@ def plot_triangle(samples, priors, labels, units, scales, out_dir, limits=[],fig
     return
 
 
-def plot_grid(x, y, grid, filename='', show=False, cmap='coolwarm', vlim=[], fig_ax=[], extent=[], figsize=(7, 6), cbar=False, xlabel='X', ylabel='Y', clabel='Displacement (mm)', dpi=300):
+def plot_grid(x, y, grid, extent=[],xlabel='X', ylabel='Y',  title='', cmap='coolwarm', vlim=[], cbar=False, clabel='Displacement (mm)', background_color='w',
+              figsize=(7, 6), fig_ax=[], file_name='', show=False, dpi=300):
     """
-    Plot     
+    Plot gridded dataset.  
     """
 
     if len(fig_ax) == 2:
@@ -793,7 +818,7 @@ def plot_grid(x, y, grid, filename='', show=False, cmap='coolwarm', vlim=[], fig
         vlim = [np.nanmin(grid), np.nanmax(grid)]
 
     if len(extent) != 4:
-        extent = [x.min(), x.max(), y.max(), y.min()]
+        extent = [np.min(x), np.max(x), np.max(y), np.min(y)]
 
     im = ax.imshow(grid, extent=extent, cmap=cmap, vmin=vlim[0], vmax=vlim[1], interpolation='none')
 
@@ -802,13 +827,17 @@ def plot_grid(x, y, grid, filename='', show=False, cmap='coolwarm', vlim=[], fig
     ax.set_xlabel(xlabel)
     ax.set_ylabel(ylabel)
     ax.set_aspect(1)
+    ax.set_facecolor(background_color)
+
+    if len(title) > 0:
+        ax.set_title(title)
 
     if cbar:
-        plt.colorbar(im, label=clabel, pad=0.4)
+        plt.colorbar(im, label=clabel, pad=0.1, shrink=0.5)
 
 
-    if len(filename) > 0:
-        plt.savefig(filename, dpi=dpi)
+    if len(file_name) > 0:
+        plt.savefig(file_name, dpi=dpi)
     
     if show:
         plt.show()
@@ -816,7 +845,8 @@ def plot_grid(x, y, grid, filename='', show=False, cmap='coolwarm', vlim=[], fig
     return fig, ax
 
 
-def plot_grids_row(grids, extent, cmap=cmc.vik, region=[], titles=[], labels=[], vlims=[], figsize=(14, 8.2), xlabel='Longitude', ylabel='Latitude', cax_kwargs=dict(size="5%", pad=0.5), show=False, filename='', dpi=300):
+def plot_grids_row(grids, extent, cmap=cmc.vik, region=[], titles=[], labels=[], vlims=[], figsize=(14, 8.2), xlabel='Longitude', ylabel='Latitude', cax_kwargs=dict(size="5%", pad=0.5), show=False, file_name='', dpi=300):
+    
     """
     Plot row of grids
     """
@@ -864,7 +894,147 @@ def plot_grids_row(grids, extent, cmap=cmc.vik, region=[], titles=[], labels=[],
     if show:
         plt.show()
 
-    if len(filename) > 0:
-        plt.savefig(filename, dpi=dpi)
+    if len(file_name) > 0:
+        plt.savefig(file_name, dpi=dpi)
 
     return fig, axes
+
+
+def plot_grid_search(cost, mu, eta, label='', xlabel='', ylabel='', contours=[], cmap=cmc.roma, mc='k',
+                     x_pref=0.6951927962, y_pref=1.4384498883, x_reverse=False, y_reverse=False, 
+                     logx=False, logy=False, log=False, file_name='', show=False, dpi=300, vlim=[],):
+    """
+    Plot heatmap and marginal distributionss of grid search.
+    """
+
+    if log:
+        cost_heatmap = np.log(cost)
+    else:
+        cost_heatmap = cost
+
+    if len(vlim) != 2:
+        vlim = [np.min(cost_heatmap), np.max(cost_heatmap)]
+
+    # Plot
+    fig = plt.figure(figsize=(10, 8))
+
+    space = 0.5
+    grid = fig.add_gridspec(3, 5,  width_ratios=(3, space/2, 1, space, 1), height_ratios=(3, space/2, 1),
+    #                       left=0, right=1, bottom=0, top=1,
+                          # left=grid_bbox[0], right=grid_bbox[1], bottom=grid_bbox[2], top=grid_bbox[3] ,
+                          wspace=0, hspace=0)
+
+    # Create the axes
+    ax2 = fig.add_subplot(grid[2, 0])
+    ax0 = fig.add_subplot(grid[0, 0], sharex=ax2)
+    ax1 = fig.add_subplot(grid[0, 2], sharey=ax0)
+    ax3 = fig.add_subplot(grid[0, 4], sharey=ax0)
+    cax = fig.add_subplot(grid[2, 3])
+
+    # Plot heatmap
+    # im = ax0.scatter(mu, eta, c=cost_heatmap, cmap=cmap, marker='s', s=1200, vmin=vlim[0], vmax=vlim[1])
+    im = ax0.contourf(mu, eta, cost_heatmap[::-1, :], 10, vmin=vlim[0], vmax=vlim[1], cmap=cmap)
+    fig.colorbar(im, cax=cax, label=label, shrink=0.1)
+
+    if len(contours) == len(cost_heatmap):
+        # cs = ax0.contour(mu, eta, contours, colors='C0', linstyles='-', linewidths=0.5, zorder=10000)
+        # ax0.clabel(cs)    
+        ax3.plot(contours[::-1, 0], eta[:, 0], c='k')
+
+    n_eta       = len(np.unique(eta))
+    n_mu        = len(np.unique(eta))
+    eta_rms_sum = np.zeros(n_eta)
+    mu_rms_sum  = np.zeros(n_mu)
+
+    # Plot x-value curves
+    for mu0 in np.unique(mu):  
+
+        mu_select = mu.flatten()[mu.flatten() == mu0]
+        rms_select = cost.flatten()[mu.flatten() == mu0]
+
+        rms_sort    = np.array([rms0 for _, rms0 in sorted(zip(mu_select, rms_select), reverse=y_reverse)])
+        eta_sort    = np.sort(np.unique(eta))
+        mu_rms_sum += rms_sort
+
+        ax1.plot(rms_sort, eta_sort, c='gainsboro')
+
+    # Plot y-value curves
+    for eta0 in np.unique(eta):
+
+        eta_select = eta.flatten()[eta.flatten() == eta0]
+        rms_select = cost.flatten()[eta.flatten() == eta0]
+
+        rms_sort     = np.array([rms0 for _, rms0 in sorted(zip(eta_select, rms_select), reverse=x_reverse)])
+        mu_sort      = np.sort(np.unique(mu))
+        eta_rms_sum += rms_sort
+
+        ax2.plot(mu_sort, rms_sort, c='gainsboro')
+
+    # Plot mean marginals
+    ax1.plot(mu_rms_sum/n_eta, eta_sort, c='k')
+    ax2.plot(mu_sort, eta_rms_sum/n_mu, c='k')
+
+    # Plot preferred values
+    if len(contours) > 0:
+        ax3.scatter(contours[::-1, 0][np.argmin(np.abs(eta_sort - y_pref))], y_pref, c=mc, marker='o', zorder=100)
+    ax1.scatter((mu_rms_sum/n_eta)[np.argmin(np.abs(eta_sort - y_pref))], y_pref, c=mc, marker='o', zorder=100)
+    ax2.scatter(x_pref, (eta_rms_sum/n_mu)[np.argmin(np.abs(mu_sort - x_pref))],  c=mc, marker='o', zorder=100)
+    ax0.scatter(x_pref, y_pref, c=mc, marker='o', zorder=200)
+
+    # Scale x-parameter
+    if logx:
+        ax0.set_xscale('log')
+        ax2.set_xscale('log')
+
+    # Scale y-parameter
+    if logy:
+        ax0.set_yscale('log')
+        ax1.set_yscale('log')
+
+    # Scale z-parameter
+    if log:
+        ax1.set_xscale('log')
+        ax2.set_yscale('log')
+
+    # Panel settings
+    ax0.xaxis.set_label_position("top")
+    ax0.xaxis.tick_top()
+    ax0.set_xlabel(xlabel)
+    ax0.set_ylabel(ylabel)
+
+    ax1.set_xlabel(label)
+    ax1.xaxis.tick_top()
+    ax1.xaxis.set_label_position("top")
+    ax1.yaxis.tick_right()
+    ax1.yaxis.set_label_position("right")
+    ax1.set_ylabel(ylabel)
+
+    ax2.set_xlabel(xlabel)
+    ax2.set_ylabel(label)
+
+    ax3.xaxis.tick_top()
+    ax3.yaxis.tick_right()
+    ax3.xaxis.set_label_position("top")
+    ax3.yaxis.set_label_position("right")
+    ax3.set_ylabel('Data res. cutoff')
+    ax3.set_xlabel('Data points')
+    ax3.set_xscale('log')
+    ax3.set_yscale('log')
+
+
+
+    # ax0.set_aspect('equal')
+    # ax1.set_aspect('equal')
+    # ax2.set_aspect('equal')
+
+
+    ax0.set_facecolor('gainsboro')
+
+    if len(file_name) > 0:
+        fig.savefig(file_name, dpi=dpi)
+    
+    if show:
+        plt.show()
+
+    return 
+
