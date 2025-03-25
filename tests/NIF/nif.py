@@ -1185,13 +1185,6 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], cost_funct
     resid   = np.empty((n_obs, n_data))
     rms     = np.empty((n_obs,))
 
-    # Define cost function for optimization
-    if cost_function == 'joint':
-        # cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(P_a[k, :, :]**-1 * (x - x_a[k, :]), ord=2)
-        cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(x - x_a[k, :], ord=2)
-    else:
-        cost_function = lambda x: np.linalg.norm(x - x_a[k, :], ord=2)
-
     print()
 
     if backward_smoothing:
@@ -1306,8 +1299,15 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], cost_funct
                     # There is no reference state if at k = 0
                     constraints = ()
 
+                # Define cost function for optimization
+                # if cost_function == 'joint':
+                #     # cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(P_a[k, :, :]**-1 * (x - x_a[k, :]), ord=2)
+                #     cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(x - x_a[k, :], ord=2)
+                # else:
+                cost_function = lambda x: np.linalg.norm(x - x_a[k, :], ord=2)
+
                 # # Perform minimization
-                results = minimize(cost_function, x_0, bounds=state_lim, method='SLSQP', constraints=constraints, tol=1e-6)
+                results = minimize(cost_function, x_0, bounds=state_lim, method='COBYLA', constraints=constraints, tol=1e-6)
                 end_opt = time.time() - start_opt
                 print(f'Constraint time: {end_opt:.2f} s')
 
