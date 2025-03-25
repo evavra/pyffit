@@ -1307,7 +1307,7 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], cost_funct
                     constraints = ()
 
                 # # Perform minimization
-                # results = minimize(cost_function, x_0, bounds=state_lim, method='SLSQP', constraints=constraints, tol=1e-6)
+                results = minimize(cost_function, x_0, bounds=state_lim, method='SLSQP', constraints=constraints, tol=1e-6)
                 end_opt = time.time() - start_opt
                 print(f'Constraint time: {end_opt:.2f} s')
 
