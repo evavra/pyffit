@@ -12,9 +12,9 @@ from matplotlib import colors
 from numba import jit
 
 # Pyffit imports
-from utilities import check_dir_tree
-from figures import plot_grid
-from data import modify_hdf5 
+from pyffit.utilities import check_dir_tree
+from pyffit.figures import plot_grid
+from pyffit.data import modify_hdf5 
 
 
 def main():
@@ -48,6 +48,7 @@ def plot_covariance_evolution():
     plt.show()
 
     return
+
 
 def estimate_covariances():
     # Data info
@@ -99,26 +100,46 @@ def estimate_covariances():
     y       = dataset.coords['y'].compute().data.flatten()
     dims    = dataset['z'].isel(date=-1).shape
     
+
+def estimate(x, y, fault, dataset, mask_dists=[3], n_samp=2*10**7, r_inc=0.2, r_max=80, m0=[0.9, 1.5, 5], c_max=2, sv_max=2, mask_dir='.', cov_dir='.', ):
+    """
+    Estimate covariances from data.
+    """
+
+    check_dir_tree(mask_dir)
+    check_dir_tree(cov_dir)
+
     sv_file = h5py.File(f'{cov_dir}/semivariogram_params.h5', 'w')
 
-    for date in dataset['date'].values:
-
+    for k, date in enumerate(dataset['date']):
+        # Format if datetime object
+        try: 
+            date = date.dt.strftime('%Y-%m-%d')
+        except AttributeError:
+            continue
+        
         data = dataset['z'].sel(date=date).compute().data.flatten()
 
-        print(f'Working on {date} {np.nanmin(data)} {np.nanmin(data)}')
+        print(f'\nWorking on {date} ({k+1}/{len(dataset["date"])}')
         
         SV         = []
         SV_params  = []
         
         for mask_dist in mask_dists:
             # Get fault mask    
-            # if mask_dist > 10:
-            # mask = get_fault_mask(x, y, fault, mask_dist=mask_dist, out_dir=mask_dir)
-            # else:
+            mask_file = f'{mask_dir}/fault_mask_{mask_dist}_km.h5'
 
-            file = h5py.File(f'{mask_dir}/fault_mask_{mask_dist}_km.h5')
-            mask = file['mask'][()]
-            file.close()
+            if os.path.exists(mask_file):
+                # print(f'##### Loading d = {mask_dist} mask #####')
+
+                with h5py.File(mask_file, 'r') as file:
+                    mask = file['mask'][()]
+            else:
+                mask = get_fault_mask(x, y, fault, mask_dist=mask_dist, out_dir=mask_dir)
+
+                file = h5py.File(mask_file, 'w')
+                file.create_dataset('mask', data=mask)
+                file.close()
 
             # # Plot mask
             # mask_inv = np.ones_like(mask) * 0.5
@@ -134,7 +155,7 @@ def estimate_covariances():
             r, sv, sv_count = semivariogram(x, y, data * mask, n_samp=n_samp, r_inc=r_inc, r_max=r_max)
 
             # Fit exponential model
-            sv_params = fit_semivariogram(r[:-1], sv, m0=[0.9, 1.5, 5], r_max=r_max).x
+            sv_params = fit_semivariogram(r[:-1], sv, m0=m0, r_max=r_max).x
 
             SV.append(sv)
             SV_params.append(sv_params)
@@ -149,7 +170,7 @@ def estimate_covariances():
 
             # Make plots
             plot_covariance(r, sv, sv_params, title=f'Mask dist. = {mask_dist} {u0} | {v0} = {sv_params[0]:.2f} {u1} | {v1} = {sv_params[1]:.2f} {u1} | {v2} = {sv_params[2]:.2f} {u0}',
-                               file_name=f'{cov_dir}/semivariogram_mask_{mask_dist}_km_{date}.png', c_max=c_max, sv_max=sv_max)
+                            file_name=f'{cov_dir}/semivariogram_mask_{mask_dist}_km_{date}.png', c_max=c_max, sv_max=sv_max)
 
             # Make covariance matrix
 
@@ -175,7 +196,8 @@ def estimate_covariances():
     # ax0.xaxis.tick_top()
     # ax0.set_xlabel(r'Distance (km)')
     # ax0.xaxis.set_label_position("top")
-    
+    return
+        
 def plot_covariance(r, sv, sv_params, figsize=(6, 3), title='', c_max=2, sv_max=2, dpi=500, file_name='', show=False):
     """
     Plot semivariogram.
