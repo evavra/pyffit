@@ -354,7 +354,7 @@ def convert_timedelta(td, unit='Y'):
 
     if unit == 'Y':
         dt /= 365.25
-    return dt
+    return float(dt)
 
 
 def ongoing_run_time(message, time_prev, units='s'):
