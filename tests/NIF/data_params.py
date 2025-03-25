@@ -11,7 +11,7 @@ import cmcrameri.cm as cmc
 
 # -------------------------- Required parameters --------------------------
 # Run mode(s)
-mode = ['analyze'] # NIF for standard NIF run              
+mode = ['NIF'] # NIF for standard NIF run              
 
 # Files and directories
 mesh_file           = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/Mesh/Geometry/mesh_points.txt'
@@ -80,7 +80,7 @@ smoothing_samp       = False
 edge_slip_samp       = False
 
 # NIF parameters
-omega           = 1e2   # temporal smoothing hyperparameter
+omega           = 2e2   # temporal smoothing hyperparameter
 sigma           = 1e1   # data covariance scaling hyperparameter (Note: for single dataset, and single kappa value for steady-state velocity, transient slip, and transient velocity, sigma becomes reduntant)
 # kappa           = 1e2   # spatial smoothing hyperparameter
 kappa           = 2e1   # spatial smoothing hyperparameter

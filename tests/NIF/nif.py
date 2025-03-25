@@ -237,6 +237,7 @@ def plot_slip_history(x, y, c, vmin=0, vmax=10, cmap=cmc.lajolla_r, label='Slip 
     # plt.show()
     return
 
+
 def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, data_dir, 
             date_index_range=[-22, -14], xkey='x', coord_type='xy', dataset_name='data',
             check_lon=False, reference_time_series=True, use_dates=False, use_datetime=False, dt=1, data_factor=1,
@@ -260,7 +261,7 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     start_total = time.time()
     
     # ------------------ Prepare run directories and files ------------------
-    date    = datetime.today().strftime('%Y%m%d_%H%M%S')
+    date    = datetime.datetime.today().strftime('%Y%m%d_%H%M%S')
     run_dir = f'{out_dir}/omega_{omega:.1e}__kappa_{kappa:.1e}__sigma_{sigma:.1e}'
     pyffit.utilities.check_dir_tree(run_dir)
     pyffit.utilities.check_dir_tree(run_dir + '/Scripts/' + date)
