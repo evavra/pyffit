@@ -346,10 +346,6 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     else:
         C = np.eye(inputs[dataset_name].tree.x.size)
 
-
-    return
-
-    
     # -------------------------- Prepare NIF objects --------------------------
     print(f'Number of fault elements: {n_patch}')
     print(f'Number of data points:    {n_data}')
