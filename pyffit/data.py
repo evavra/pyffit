@@ -383,9 +383,8 @@ def load_insar_dataset(data_dir, data_file_format, name, ref_point, data_factor=
     # Load InSAR data
     dataset = read_insar_dataset(data_dir, data_file_format, xkey=xkey, date_index_range=date_index_range, check_lon=check_lon, use_dates=use_dates, use_datetime=use_datetime)
 
-    print(np.nanmean(np.abs(dataset['z'])), np.nanstd(np.abs(dataset['z'])))
-    dataset['z'] = data_factor * dataset['z']
-    print(np.nanmean(np.abs(dataset['z'])), np.nanstd(np.abs(dataset['z'])))
+    if data_factor != 1:
+        dataset['z'] = data_factor * dataset['z']
 
 
     if len(mask_file) > 0:
