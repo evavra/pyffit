@@ -17,8 +17,9 @@ import matplotlib.pyplot as plt
 from matplotlib.animation import FuncAnimation, FFMpegWriter
 from mpl_toolkits.mplot3d.art3d import Poly3DCollection
 from scipy.optimize import minimize 
+from scipy.interpolate import griddata 
 from matplotlib import colors
-from datetime import datetime
+import datetime
 from types import ModuleType
 from numba import jit
 
@@ -40,9 +41,12 @@ def main():
     mode, params = load_parameters(param_file)
     
     # Perform standard NIF run
-    if mode == 'NIF':
+    if 'NIF' in mode:
         run_nif(**params)
-
+        
+    if 'analyze' in mode:
+        analyze_nif(**params)
+        
     return
 
 # greens_function_dir='.',
@@ -79,11 +83,165 @@ def load_parameters(file_name):
     return mode, params
 
 
-# ------------------ Drivers ------------------ 
+# ------------------ Drivers ------------------
+def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, data_dir, 
+            date_index_range=[-22, -14], xkey='x', coord_type='xy', dataset_name='data',
+            check_lon=False, reference_time_series=True, use_dates=False, use_datetime=False, dt=1, data_factor=1,
+            model_file='', mask_file='', estimate_covariance=False, mask_dists=[3], n_samp=2*10**7, r_inc=0.2, r_max=80, mask_dir='.', cov_dir='.', 
+            m0=[0.9, 1.5, 5], c_max=2, sv_max=2, ref_point=[-116, 33.5], avg_strike=315.8, trace_inc=0.01, poisson_ratio=0.25, 
+            shear_modulus=6*10**9, disp_components=[1], slip_components=[0], resolution_threshold=2.3e-1, 
+            width_min=0.1, width_max=10, max_intersect_width=100, min_fault_dist=1, max_iter=10, 
+            smoothing_samp=False, edge_slip_samp=False,  omega=1e1, sigma=1e1, kappa=2e1, mu=2e1, 
+            eta=2e1, v_sigma=1e-9, W_sigma=1,  W_dot_sigma=1, v_lim=(0,3), W_lim=(0,30), W_dot_lim=(0,50), 
+            xlim=[-35.77475071,26.75029172], ylim=[-26.75029172, 55.08597388], vlim_slip=[0, 20], 
+            vlim_disp=[[-10,10], [-10,10], [-1,1]], cmap_disp=cmc.vik, figsize=(10, 10), dpi=75, markersize=40, 
+            param_file='params.py',
+
+            # look_dir, asc_velo_model_file, des_velo_model_file, ykey='y', EPSG='32611', 
+            # data_region=[-116.4, -115.7, 33.25, 34.0], smoothing_inv=True, edge_slip_inv=False,
+            ):
+    """
+    Analyze network inversion filter results.
+    """
+    run_dir    = f'{out_dir}/omega_{omega:.1e}__kappa_{kappa:.1e}__sigma_{sigma:.1e}'
+    result_dir = f'{run_dir}/Results'
+
+    # -------------------------- Get original data --------------------------    
+    # Load fault model and regularization matrices
+    fault = pyffit.finite_fault.TriFault(mesh_file, triangle_file, slip_components=slip_components, 
+                                         poisson_ratio=poisson_ratio, shear_modulus=shear_modulus, 
+                                         verbose=False, trace_inc=trace_inc, mu=mu, eta=eta)
+    n_patch = len(fault.triangles)
+    n_dim   = 3 * n_patch
+
+    # Load data
+    dataset = pyffit.data.load_insar_dataset(data_dir, file_format, dataset_name, ref_point, data_factor=data_factor, xkey=xkey, 
+                                             coord_type=coord_type, date_index_range=date_index_range, 
+                                             check_lon=check_lon, reference_time_series=reference_time_series, 
+                                             incremental=False, use_dates=use_dates, use_datetime=use_datetime, 
+                                             mask_file=mask_file)
+    # datasets = {dataset_name: dataset}
+    # n_obs    = len(dataset.date)
+    # x        = dataset.coords['x'].compute().data.flatten()
+    # y        = dataset.coords['y'].compute().data.flatten()
+
+    # Load results
+    with open(f'{run_dir}/results_smoothing.pkl', 'rb') as file:
+        results_smoothing = pickle.load(file)
+        x_model = results_smoothing.x_s
+
+    # Compute integrated slip
+    slip_model = integrate_slip(x_model, dt)
+
+    # Get along-strike projected coordinates
+    mesh_r         = np.copy(fault.mesh)
+    x_mesh, y_mesh = pyffit.utilities.rotate(fault.mesh[:, 0], fault.mesh[:, 1], np.deg2rad(avg_strike + 90))
+    # x_r, y_r       = pyffit.utilities.rotate(Inversion.datasets[key].tree.x, Inversion.datasets[key].tree.y, np.deg2rad(avg_strike + 90))
+    # y_r           -= np.nanmean(y_mesh[fault.mesh[:, 2] == 0])
+    # y_mesh        -= np.nanmean(y_mesh[fault.mesh[:, 2] == 0])
+    mesh_r[:, 0]   = x_mesh
+    mesh_r[:, 1]   = y_mesh
+    
+    # Get centroid values
+    x_center = np.array([mesh_r[tri][:, 0].mean() for tri in fault.triangles])
+    z_center = np.array([mesh_r[tri][:, 2].mean() for tri in fault.triangles])
+    x_center -= x_center.min()
+
+    # x_rng = np.linspace(x_center.min(), x_center.max(), 100)
+    # z_rng = np.linspace(z_center.min(), z_center.max(), 100)
+    # x_grid, z_grid = np.meshgrid(x_rng, z_rng)
+
+    # Interpolate
+    # slip_interp = griddata((x_center, z_center), slip_model[-1, :], (x_grid, z_grid), method='cubic')
+
+    n_x = int(x_center.max())*20
+    n_z = int(abs(z_center).max())*20
+    dt  = convert_timedelta((dataset['date'][1] - dataset['date'][0]).values)
+
+    x_rng = np.linspace(x_center.min(), x_center.max(), n_x)
+    z_rng = np.linspace(z_center.min(), z_center.max(), n_z)
+    x_grid, z_grid = np.meshgrid(x_rng, z_rng)
+
+    slip_history = np.empty((slip_model.shape[0], n_z, n_x))
+
+
+    # Interpolate slip history to regurlar grid
+    for k in range(len(slip_model)):
+        slip_history[k, :, :] = griddata((x_center, z_center), slip_model[k, :], (x_grid, z_grid), method='cubic')
+
+
+    print(dt)
+    print((slip_history[1, :, :] -  slip_history[0, :, :])/dt)
+    slip_rate_history = np.zeros_like(slip_history)
+    A = np.array([(slip_history[k, :, :] - slip_history[k - 1, :, :])/dt for k in range(1, len(slip_history))])
+    A = np.array([(slip_history[k + 1, :, :] - slip_history[k - 1, :, :])/(2*dt) for k in range(1, len(slip_history) - 1)])
+    slip_rate_history[1:-1, :, :] = A
+
+    # -------------------- Plot history --------------------
+    vmin   = 0
+    vmax   = 10
+    cmap   = cmc.lajolla_r
+
+    title  = 'Depth averaged slip rate'
+    label  = 'Slip rate (mm/yr)'
+    hlines = [datetime.datetime(2017, 9, 8, 0, 0, 0), datetime.datetime(2019, 7, 5, 0, 0, 0)]
+
+    file_name = f'{result_dir}/History_slip_rate.png'
+    dpi       = 300
+
+    plot_slip_history(x_rng, dataset['date'], np.mean(slip_rate_history, axis=1), title=title, label=label, hlines=hlines, file_name=file_name)
+
+
+def plot_slip_history(x, y, c, vmin=0, vmax=10, cmap=cmc.lajolla_r, label='Slip (mm)', hlines=[], 
+                        title='', figsize=(10, 6), file_name='', show=False, dpi=300):
+    """
+    Make heatmap of slip/slip rate history.
+    """
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    im = ax.pcolormesh(x, y, c, shading='nearest', cmap=cmap, vmin=vmin, vmax=vmax)
+
+    if len(hlines) > 0:
+        ax.hlines(hlines, x.min(), x.max(), color='gainsboro', linestyle='--')
+    
+    ax.set_ylim(y[-1], y[0])
+    ax.set_aspect(1/100)
+    ax.set_xlabel('Distance (km)')
+    ax.set_ylabel('Date')
+    ax.set_facecolor('gainsboro')
+    ax.set_title(title)
+    plt.colorbar(im, label=label, shrink=0.5, ticks=np.arange(0, 16, 5))
+    plt.tight_layout()
+
+    if len(file_name) > 0:
+        plt.savefig(file_name, dpi=dpi)
+
+    if show:
+        plt.show()
+    return
+
+
+
+
+
+    # # -------------------- Plot fault --------------------
+    # vmin = 0
+    # vmax = 30
+    
+    # fig, ax = plt.subplots(figsize=(14, 8.2))
+    # # ax.scatter(mesh_r[:, 0], mesh_r[:, 2], marker='.')
+    # ax.scatter(x_center, z_center, c=slip_model[-1, :], vmin=vmin, vmax=vmax, edgecolors='k')
+    # ax.imshow(slip_interp, vmin=vmin, vmax=vmax, extent=[x_center.min(), x_center.max(), z_center.max(), z_center.min()])
+    # ax.set_aspect(1)
+    # ax.set_ylim(-5, 0)
+    # plt.show()
+    return
+
 def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, data_dir, 
             date_index_range=[-22, -14], xkey='x', coord_type='xy', dataset_name='data',
-            check_lon=False, reference_time_series=True,  use_dates=False, use_datetime=False, dt=1,
-            model_file='', mask_file='', ref_point=[-116, 33.5], avg_strike=315.8, trace_inc=0.01, poisson_ratio=0.25, 
+            check_lon=False, reference_time_series=True, use_dates=False, use_datetime=False, dt=1, data_factor=1,
+            model_file='', mask_file='', estimate_covariance=False, mask_dists=[3], n_samp=2*10**7, r_inc=0.2, r_max=80, mask_dir='.', cov_dir='.', 
+            m0=[0.9, 1.5, 5], c_max=2, sv_max=2, ref_point=[-116, 33.5], avg_strike=315.8, trace_inc=0.01, poisson_ratio=0.25, 
             shear_modulus=6*10**9, disp_components=[1], slip_components=[0], resolution_threshold=2.3e-1, 
             width_min=0.1, width_max=10, max_intersect_width=100, min_fault_dist=1, max_iter=10, 
             smoothing_samp=False, edge_slip_samp=False,  omega=1e1, sigma=1e1, kappa=2e1, mu=2e1, 
@@ -113,7 +271,6 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     pyffit.utilities.check_dir_tree(result_dir + '/Slip')
     pyffit.utilities.check_dir_tree(result_dir + '/Matrices')
     pyffit.utilities.check_dir_tree(result_dir + '/Resolution')
-
     pyffit.utilities.check_dir_tree(downsampled_dir)
 
     # Copy parameter file and nif.py version to run directory
@@ -130,14 +287,17 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     n_patch = len(fault.triangles)
     n_dim   = 3 * n_patch
 
+
     # Load data
-    dataset = pyffit.data.load_insar_dataset(data_dir, file_format, dataset_name, ref_point, data_factor=10, xkey=xkey, 
+    dataset = pyffit.data.load_insar_dataset(data_dir, file_format, dataset_name, ref_point, data_factor=data_factor, xkey=xkey, 
                                              coord_type=coord_type, date_index_range=date_index_range, 
                                              check_lon=check_lon, reference_time_series=reference_time_series, 
                                              incremental=False, use_dates=use_dates, use_datetime=use_datetime, 
                                              mask_file=mask_file)
     datasets = {dataset_name: dataset}
     n_obs    = len(dataset.date)
+    x        = dataset.coords['x'].compute().data.flatten()
+    y        = dataset.coords['y'].compute().data.flatten()
 
     # dt = convert_timedelta(dataset.date[1] - dataset.date[0], unit='D')
 
@@ -175,17 +335,26 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     # dt     = 12 # time step (days)
     dt    /= 365.25
 
-    # Define covariance matrix
+    # Define covariance matrices
     # r = get_distances(inputs[dataset_name].tree.x, inputs[dataset_name].tree.y)
     # C = exponential_covariance(r, 1, 1, file_name=f'{run_dir}/exponential_covariance.png', show=False)
-    C = np.eye(inputs[dataset_name].tree.x.size)
-    
-    print(f'Number of fault elements: {n_patch}')
-    print(f'Number of data points:    {n_data}')
+
+
+    if estimate_covariance:
+        pyffit.covariance.estimate(x, y, fault, dataset, mask_dists, n_samp=n_samp, r_inc=r_inc, r_max=r_max, mask_dir=mask_dir, cov_dir=cov_dir, m0=m0, c_max=c_max, sv_max=sv_max,)
+    else:
+        C = np.eye(inputs[dataset_name].tree.x.size)
+
+
+    return
+
     
     # -------------------------- Prepare NIF objects --------------------------
+    print(f'Number of fault elements: {n_patch}')
+    print(f'Number of data points:    {n_data}')
+
     # Prepare data
-    samp_file  =f'cutoff={resolution_threshold:.1e}_wmin={width_min:.2f}_wmax={width_max:.2f}_max_int_w={max_intersect_width:.1f}_min_fdist={min_fault_dist:.2f}_max_it={max_iter:0f}'
+    samp_file = f'cutoff={resolution_threshold:.1e}_wmin={width_min:.2f}_wmax={width_max:.2f}_max_int_w={max_intersect_width:.1f}_min_fdist={min_fault_dist:.2f}_max_it={max_iter:0f}'
     d = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{samp_file}.pkl')
 
     # Get Greens Functions
@@ -216,18 +385,17 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
 
     print(f'Forward avg. slip  {np.mean(s_model_forward):.1f} +\- {np.std(s_model_forward):.1f} | range = {s_model_forward.min():.1f} {s_model_forward.max():.1f} | v = {np.mean(x_model_forward[:, :n_patch]):.1e} +/- {np.mean(x_model_forward[:, :n_patch]):.1e} mm/yr')
     print(f'Smoothed avg. slip {np.mean(s_model):.1f} +\- {np.std(s_model):.1f} | range = {s_model.min():.1f} {s_model.max():.1f} | v = {np.mean(x_model[:, :n_patch]):.1e} +/- {np.mean(x_model[:, :n_patch]):.1e} mm/yr')
-    print(f'True avg. slip     {np.mean(s_true):.1f} +\- {np.std(s_true):.1f} | range = {s_true.min():.1f} {s_true.max():.1f}')
+    
+    if np.isnan(slip_model).all():
+        print(f'True avg. slip     {np.mean(s_true):.1f} +\- {np.std(s_true):.1f} | range = {s_true.min():.1f} {s_true.max():.1f}')
     
     start = time.time()
     
-
-
     # -------------------- Slip s --------------------
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.set_xlabel('Time')
     ax.set_ylabel('Slip (mm)')
-    # ax.set_xlim(0, 200)
-    ax.set_ylim(0, 10)
+    ax.set_ylim(0, np.max(s_model))
 
     for i in range(n_patch):
         ax.plot(dataset.date, s_true[:, i], c='k', alpha=0.3, zorder=0)
@@ -248,8 +416,7 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     fig, ax = plt.subplots(figsize=(6, 4))
     ax.set_xlabel('Time')
     ax.set_ylabel('Slip (mm)')
-    # ax.set_xlim(0, 200)
-    ax.set_ylim(-0.2, 10)
+    ax.set_ylim(-0.2, np.max(s_model))
 
     vmin      = -3
     vmax      = 0
@@ -258,7 +425,6 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     n_seg     = 10
 
     cvar  = np.min(fault.patches[:, :, 2], axis=1)
-    print(cvar.min(), cvar.max())
     cval  = (cvar - vmin)/(vmax - vmin) # Normalized color values
     ticks = np.linspace(vmin, vmax, n_tick)
 
@@ -273,7 +439,6 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     plt.colorbar(sm, label='Depth (km)')
     plt.savefig(f'{result_dir}/Evolution_slip_depth.png', dpi=300)
     plt.close()
-
 
 
     # -------------------- Residuals --------------------
@@ -392,10 +557,6 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
             show        = False
             file_name   = f'{result_dir}/Results/{run}_{date}.png'
 
-            # vlim_slip = [0, np.max(s[k, :])]
-            # vlim_disp = [-np.max(np.abs(results.model[k, :])), 
-            #               np.max(np.abs(results.model[k, :])), ]
-
             data_panels = [
                         dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=d[k, :n_data],       label=dataset_name),
                         dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results.model[k, :], label='Model'),
@@ -408,6 +569,7 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
                         ]
             
             params.append([data_panels, fault_panels, fault, figsize, title, markersize, orientation, fault_lim, vlim_slip, cmap_disp, vlim_disp, xlim, ylim, dpi, show, file_name])
+
             if k == len(x_model):
                 print(np.mean(np.abs(d[k, :n_data])), np.std(np.abs(d[k, :n_data])))
 
@@ -436,11 +598,19 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
         # date = datasets[dataset_name].date[-(k + 1)]
         date = datasets[dataset_name].date[k].dt.strftime('%Y-%m-%d')
 
-        fig, ax = pyffit.figures.plot_fault_3d(fault.mesh, fault.triangles, c=s_model[k, :], edges=True, cmap_name='viridis', cbar_label='Dextral slip (mm)', 
-                                            vlim_slip=[0, 4], labelpad=10, azim=235, elev=17, n_seg=10, n_tick=6, alpha=1, title=f'{date}: Mean = {s_model[k, :].mean():.2f} | range = {s_model[k, :].min():.2f}-{s_model[k, :].max():.2f}',
+        fig, ax = pyffit.figures.plot_fault_3d(fault.mesh, fault.triangles, c=s_model[k, :], 
+                                               edges=True, 
+                                               cmap_name='viridis', 
+                                               cbar_label='Dextral slip (mm)', 
+                                               vlim_slip=vlim_slip, 
+                                               labelpad=10, 
+                                               azim=235, 
+                                               elev=17, 
+                                               n_seg=10, 
+                                               n_tick=6, alpha=1, title=f'{date}: Mean = {s_model[k, :].mean():.2f} | range = {s_model[k, :].min():.2f}-{s_model[k, :].max():.2f}',
                                             show=False, figsize=(8, 5), cbar_kwargs=dict(location='right', pad=0.05, shrink=0.4))
         fig.tight_layout()
-        fig.savefig(f'{result_dir}/Slip/slip_smoothing_{date}.png', dpi=200)
+        fig.savefig(f'{result_dir}/Slip/slip_smoothing_{date}.png', dpi=100)
         plt.close()
 
         # # Plot residuals
@@ -973,7 +1143,7 @@ def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, v_sigma, W
     # Perform backward smoothing
     results_smoothing = kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=state_lim, cost_function=cost_function, backward_smoothing=True)
     # with open(f'{result_dir}/results_smoothing.pkl', 'rb') as file:
-    #     results_smoothing = pickle.load(file)
+        # results_smoothing = pickle.load(file)
     
     x_model_smoothing = results_smoothing.x_s
 
