@@ -337,13 +337,13 @@ def get_downsampled_time_series(datasets, inversion_inputs, fault, n_dim, datase
 
     # Load downsampled time series matrix if already exists
     if os.path.exists(file_name):
-        print('##### Loading time series #####')
+        print('\n##### Loading time series #####')
         with open(file_name, 'rb') as f:
             d = pickle.load(f)
 
     # Apply existing quadtree to time-series
     else:
-        print('##### Downsampling time series #####')
+        print('\n##### Downsampling time series #####')
         d    = np.zeros((datasets[dataset_name].date.size, inversion_inputs[dataset_name].tree.data.size + n_dim), dtype=float)
         look = np.array([datasets[dataset_name]['look_e'].compute().data.flatten(), 
                          datasets[dataset_name]['look_n'].compute().data.flatten(), 
@@ -357,7 +357,6 @@ def get_downsampled_time_series(datasets, inversion_inputs, fault, n_dim, datase
             
             date = datasets[dataset_name].date.values[k]
 
-            
             # Select data for date
             data = datasets[dataset_name]['z'].isel(date=k).compute().data
 
