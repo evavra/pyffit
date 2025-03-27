@@ -11,13 +11,13 @@ import cmcrameri.cm as cmc
 
 # -------------------------- Required parameters --------------------------
 # Run mode(s)
-mode = ['NIF'] # NIF for standard NIF run              
+mode = ['NIF', 'analyze'] # NIF for standard NIF run              
 
 # Files and directories
-mesh_file           = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/Mesh/Geometry/mesh_points.txt'
-triangle_file       = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/Mesh/Geometry/mesh_connectivity.txt'
-downsampled_dir     = f'/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/high_resolution/downsampled_data'
-out_dir             = f'/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/high_resolution'
+mesh_file           = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/Mesh/Geometry/mesh_points_simple.txt'
+triangle_file       = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/Mesh/Geometry/mesh_connectivity_simple.txt'
+downsampled_dir     = f'/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/low_resolution/downsampled_data'
+out_dir             = f'/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/low_resolution'
 data_dir            = '/Users/evavra/Projects/SSAF/Data/InSAR/Sentinel_1/timeseries/decomposed/filt'
 file_format         = 'u_para_*_filt_10km.grd'
 
@@ -46,7 +46,7 @@ mask_dir   = '/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/masks/'
 cov_dir    = '/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/covariance/'
 
 # Covariance estimation parameters
-estimate_covariance = True
+estimate_covariance = False
 mask_dists          = [3]
 n_samp              = 2*10**7
 r_inc               = 0.2
@@ -69,8 +69,8 @@ disp_components = [1]       # displacement components to use [0 for fault-perpen
 slip_components = [0]       # slip components to use [0 for strike-slip, 1 for dip-slip, 2 for opening]
 
 # Resolution based resampling
-# resolution_threshold = 2.3e-1 # cutoff value for resolution matrix (lower values = more points)
-resolution_threshold = 1.0 # cutoff value for resolution matrix (lower values = more points)
+resolution_threshold = 2.3e-1 # cutoff value for resolution matrix (lower values = more points)
+# resolution_threshold = 1.0 # cutoff value for resolution matrix (lower values = more points)
 width_min            = 0.1 # Min. allowed cell size (km)
 width_max            = 10  # Max. allowed cell size (km)
 max_intersect_width  = 100 # Max. allowed size for fault-intersecting cells (km)
@@ -80,15 +80,15 @@ smoothing_samp       = False
 edge_slip_samp       = False
 
 # NIF parameters
-omega           = 2e2   # temporal smoothing hyperparameter
+omega           = 1e2   # temporal smoothing hyperparameter
 sigma           = 1e1   # data covariance scaling hyperparameter (Note: for single dataset, and single kappa value for steady-state velocity, transient slip, and transient velocity, sigma becomes reduntant)
 # kappa           = 1e2   # spatial smoothing hyperparameter
 kappa           = 2e1   # spatial smoothing hyperparameter
 mu              = kappa # spatial smoothing hyperparameter
 eta             = kappa # zero-edge-slip hyperparameter
 
-
 # Uncertainties and limits
+constrain       = False
 v_sigma         = 1e-9    # initial uncertainty on interseimic slip rate (mm/yr) 
 W_sigma         = 10       # initial uncertainty on transient slip (mm) 
 W_dot_sigma     = 10       # initial uncertainty on transient slip rate (mm/yr) \
