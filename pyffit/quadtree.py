@@ -371,7 +371,7 @@ def get_downsampled_time_series(datasets, inversion_inputs, fault, n_dim, datase
             inversion_inputs[dataset_name].tree.compute_values(cells)
             d[k, :inversion_inputs[dataset_name].tree.data.size] = inversion_inputs[dataset_name].tree.data
             end_date = time.time() - start_date
-            print(f'{date} ({k + 1}/{n_date}) completed in {end_date:.1s}')
+            print(f'{date} ({k + 1}/{n_date}) completed in {end_date:.1f} s')
 
         print('\n' + f'Saving time series matrix d to {file_name}')
 
@@ -379,7 +379,7 @@ def get_downsampled_time_series(datasets, inversion_inputs, fault, n_dim, datase
             pickle.dump(d, f)
 
         end = time.time() - start
-        print(f'Data computation time: {end:.1f}')
+        print(f'Data computation time: {end:.1f} s')
     return d
 
 
