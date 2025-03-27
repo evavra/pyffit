@@ -35,6 +35,7 @@ def main():
     # make_synthetic_data()
     # make_fault_movie()
 
+    start = time.time()
     param_file = sys.argv[1]
 
     # Load parameters
@@ -46,7 +47,10 @@ def main():
         
     if 'analyze' in mode:
         analyze_nif(**params)
-        
+
+    end = time.time() - start
+    print(f'Total run time: {end/60:.2}')
+
     return
 
 # greens_function_dir='.',
@@ -482,7 +486,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
 
 
     end = time.time() - start
-    print(f'Plotting time: {end:.1f} s')
+    print(f'Total plotting time: {end:.1f} s')
 
     return
 
@@ -668,7 +672,7 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
         print(f'True avg. slip     {np.mean(s_true):.1f} +\- {np.std(s_true):.1f} | range = {s_true.min():.1f} {s_true.max():.1f}')
 
     end_total = time.time() - start_total
-    print(f'Total run time: {end_total/60:.1f} min')
+    print(f'Total inversion time: {end_total/60:.1f} min')
 
     return
 
@@ -1397,17 +1401,21 @@ def read_kalman_filter_results(file_name):
 
     with h5py.File(f'{file_name}', 'r') as file:
 
-        model = file['model'][()] 
-        resid = file['resid'][()] 
-        rms   = file['rms'][()]   
+
         backward_smoothing = file['backward_smoothing'][()]
 
         if backward_smoothing:
-            x_s = file['x_s'][()] 
-            P_s = file['P_s'][()] 
+            model = file['model'][()][::-1]  
+            resid = file['resid'][()][::-1]  
+            rms   = file['rms'][()][::-1]    
+            x_s = file['x_s'][()][::-1] 
+            P_s = file['P_s'][()][::-1] 
             return KalmanFilterResults(model, resid, rms, x_s=x_s, P_s=P_s, backward_smoothing=backward_smoothing)
 
         else:
+            model = file['model'][()] 
+            resid = file['resid'][()] 
+            rms   = file['rms'][()]   
             x_f = file['x_f'][()] 
             x_a = file['x_a'][()] 
             P_f = file['P_f'][()] 

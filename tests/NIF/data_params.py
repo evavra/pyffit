@@ -11,7 +11,7 @@ import cmcrameri.cm as cmc
 
 # -------------------------- Required parameters --------------------------
 # Run mode(s)
-mode = ['NIF', 'analyze'] # NIF for standard NIF run              
+mode = ['analyze'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
 
 # Files and directories
 mesh_file           = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/Mesh/Geometry/mesh_points_simple.txt'
