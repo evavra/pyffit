@@ -1,4 +1,5 @@
 import os
+import sys
 import time
 import shutil
 import numpy as np
@@ -6,7 +7,24 @@ import pandas as pd
 from pyproj import CRS, Proj
 from scipy.interpolate import interp1d
 
+# ---------------------------- Classes ----------------------------
+class Logger(object):
+    """
+    Class to allow for print statments to be echoed to a log file.
 
+    Usage: add the following line to the beginning of the script.
+        sys.stdout = pyffit.utilities.Logger()
+
+    """
+    def __init__(self, filename, mode='w'):
+        self.terminal = sys.stdout
+        self.log = open(filename, mode)
+
+    def write(self, message):
+        self.terminal.write(message)
+        self.log.write(message)  
+
+# ---------------------------- Methods ----------------------------
 def proj_ll2utm(x, y, crs_epsg, inverse=False):
     """
     Project WGS84 lon/lat coordinates to UTM coordinates.
