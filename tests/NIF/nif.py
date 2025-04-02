@@ -35,6 +35,7 @@ def main():
     # make_synthetic_data()
     # make_fault_movie()
 
+    # sys.stdout = pyffit.utilities.Logger('/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/log.txt')
     start = time.time()
     param_file = sys.argv[1]
 
@@ -49,7 +50,7 @@ def main():
         analyze_nif(**params)
 
     end = time.time() - start
-    print(f'Total run time: {end/60:.2}')
+    print(f'Total run time: {end/60:.2f}')
 
     return
 
@@ -488,52 +489,6 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     end = time.time() - start
     print(f'Total plotting time: {end:.1f} s')
 
-    return
-
-
-def plot_slip_history(x, y, c, vmin=0, vmax=10, tick_inc=5, cmap=cmc.lajolla_r, label='Slip (mm)', hlines=[], 
-                        title='', figsize=(10, 6), file_name='', show=False, dpi=300):
-    """
-    Make heatmap of slip/slip rate history.
-    """
-    
-    fig, ax = plt.subplots(figsize=figsize)
-    im = ax.pcolormesh(x, y, c, shading='nearest', cmap=cmap, vmin=vmin, vmax=vmax)
-
-    if len(hlines) > 0:
-        ax.hlines(hlines, x.min(), x.max(), color='gainsboro', linestyle='--')
-    
-    ax.set_ylim(y[-1], y[0])
-    ax.set_aspect(1/100)
-    ax.set_xlabel('Distance (km)')
-    ax.set_ylabel('Date')
-    ax.set_facecolor('gainsboro')
-    ax.set_title(title)
-    plt.colorbar(im, label=label, shrink=0.5, ticks=np.arange(vmin, vmax + tick_inc, tick_inc))
-    plt.tight_layout()
-
-    if len(file_name) > 0:
-        plt.savefig(file_name, dpi=dpi)
-
-    if show:
-        plt.show()
-    return
-
-
-
-
-
-    # # -------------------- Plot fault --------------------
-    # vmin = 0
-    # vmax = 30
-    
-    # fig, ax = plt.subplots(figsize=(14, 8.2))
-    # # ax.scatter(mesh_r[:, 0], mesh_r[:, 2], marker='.')
-    # ax.scatter(x_center, z_center, c=slip_model[-1, :], vmin=vmin, vmax=vmax, edgecolors='k')
-    # ax.imshow(slip_interp, vmin=vmin, vmax=vmax, extent=[x_center.min(), x_center.max(), z_center.max(), z_center.min()])
-    # ax.set_aspect(1)
-    # ax.set_ylim(-5, 0)
-    # plt.show()
     return
 
 
@@ -1184,7 +1139,9 @@ def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, v_sigma, W
     gc.collect()
 
     # Perform backward smoothing
-    results_smoothing = kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, constrain=constrain, state_lim=state_lim, cost_function=cost_function, backward_smoothing=True)
+    # results_smoothing = kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, constrain=constrain, state_lim=state_lim, cost_function=cost_function, backward_smoothing=True)
+    # results_smoothing = backward_smoothing(results_forward.x_f, results_forward.x_a, results_forward.P_f, results_forward.P_a, d, dt, G, L, T,constrain=constrain, state_lim=state_lim, cost_function=cost_function)
+    results_smoothing = backward_smoothing(f'{result_dir}/results_forward.h5', d, dt, G, L, T,constrain=constrain, state_lim=state_lim, cost_function=cost_function)
     write_kalman_filter_results(results_smoothing, file_name=f'{result_dir}/results_smoothing.h5', backward_smoothing=True)
 
     # with open(f'{result_dir}/results_smoothing.pkl', 'rb') as file:
@@ -1296,7 +1253,7 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], constrain=
                                     
         # Constrain state estimate 
         start_opt = time.time()
-
+        print(f'State range: {x_a[k, :].min():.2f} - {x_a[k, :].max():.2f}')
         if len(state_lim) == n_dim:
 
             bounds_flag = False
@@ -1351,6 +1308,7 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], constrain=
                 #     cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(x - x_a[k, :], ord=2)
                 # else:
                 cost_function = lambda x: np.linalg.norm(x - x_a[k, :], ord=2)
+                # cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(x - x_a[k, :], ord=2)
 
                 # # Perform minimization
                 if constrain:
@@ -1365,7 +1323,8 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], constrain=
                     end_opt = 0
                     x_a[k, :] = x_0
 
-
+                print(f'Updated state range: {x_a[k, :].min():.2f} - {x_a[k, :].max():.2f}')
+                
             else:
                 print(f'Step {k} state is within bounds')
                 end_opt = 0
@@ -1401,15 +1360,21 @@ def read_kalman_filter_results(file_name):
 
     with h5py.File(f'{file_name}', 'r') as file:
 
-
+        for key in file.keys():
+            print(key)
         backward_smoothing = file['backward_smoothing'][()]
 
         if backward_smoothing:
-            model = file['model'][()][::-1]  
-            resid = file['resid'][()][::-1]  
-            rms   = file['rms'][()][::-1]    
-            x_s = file['x_s'][()][::-1] 
-            P_s = file['P_s'][()][::-1] 
+            # model = file['model'][()][::-1]  
+            # resid = file['resid'][()][::-1]  
+            # rms   = file['rms'][()][::-1]    
+            # x_s = file['x_s'][()][::-1] 
+            # P_s = file['P_s'][()][::-1] 
+            model = file['model'][()]  
+            resid = file['resid'][()]  
+            rms   = file['rms'][()]    
+            x_s = file['x_s'][()] 
+            P_s = file['P_s'][()] 
             return KalmanFilterResults(model, resid, rms, x_s=x_s, P_s=P_s, backward_smoothing=backward_smoothing)
 
         else:
@@ -1448,14 +1413,164 @@ def write_kalman_filter_results(results, file_name='results.h5', overwrite=True,
             file.create_dataset('P_s', data=results.P_s)
         else:
             file.create_dataset('x_f', data=results.x_f)
-            file.create_dataset('x_a', data=results.x_a)
             file.create_dataset('P_f', data=results.P_f)
+
+    if not backward_smoothing:
+        with h5py.File(f'{file_name}', 'a') as file:
+            file.create_dataset('x_a', data=results.x_a)
             file.create_dataset('P_a', data=results.P_a)
 
     return
 
 
-def backward_smoothing(x_f, x_a, P_f, P_a, d, dt, G, L, T, state_lim=[], cost_function='state'):
+def backward_smoothing(result_file, d, dt, G, L, T, constrain=False, state_lim=[], cost_function='state'):
+    """
+    Dimensions:
+    n_obs  - # of time points
+    n_dim  - # of model parameters
+    n_data - # of data points
+
+    INPUT:
+    x_f, x_a (n_obs, n_dim)         - forecasted and analyzed state vectors
+    P_f, P_a (n_obs, n_dim, n_dim)  - forecasted and analyzed covariance matrices 
+    T        (n_dim, n_dim)         - state transition matrix: maps state x_k to next state x_k-1
+
+    OUTPUT:
+    """
+
+    start_total = time.time()
+    file = h5py.File(f'{result_file}', 'r')
+    x_f = file['x_f'][()]
+    x_a = file['x_a'][()]
+
+    # ---------- Kalman Filter ---------- 
+    # Get lengths
+    n_obs   = x_f.shape[0]
+    n_dim   = x_f.shape[1]
+    n_patch = n_dim//3
+    n_data  = d.shape[1] - n_dim
+
+    # Initialize
+    x_s     = np.empty((n_obs, n_dim))        # analyzed states
+    P_s     = np.empty((n_obs, n_dim, n_dim)) # analyzed covariances
+    S       = np.empty((n_obs - 1, n_dim, n_dim)) # analyzed covariances
+    model   = np.empty((n_obs, n_data))
+    resid   = np.empty((n_obs, n_data))
+    rms     = np.empty((n_obs,))
+
+    # # Define cost function for optimization
+    # if cost_function == 'joint':
+    #     # cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(P_a[k, :, :]**-1 * (x - x_a[k, :]), ord=2)
+    #     cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(x - x_a[k, :], ord=2)
+    # else:
+
+    print(f'\n##### Running backward smoothing ##### ')
+
+    # Set last epoch to be equal to forward filtering result
+    x_s[-1, :]    = x_a[-1, :]
+    P_s[-1, :, :] = file['P_a'][-1, :, :]
+
+    for k in reversed(range(0, n_obs - 1)):
+        print(f'\n##### Working on Step {k} #####')
+        
+        # Compute smoothing matrix S
+        P_f_inv = np.linalg.pinv(file['P_f'][k + 1, :, :], hermitian=True)
+        S[k, :, :] = file['P_a'][k, :, :] @ T.T @ P_f_inv
+
+        # Get smoothed states and covariances
+        x_s[k, :]    = x_a[k, :] + S[k, :, :] @ (x_s[k + 1, :] - x_f[k + 1, :])
+        P_s[k, :, :] = file['P_a'][k, :] + S[k, :, :] @ (P_s[k + 1, :, :] - file['P_f'][k + 1, :, :]) @ S[k, :, :].T
+        
+         # Constrain state estimate 
+        start_opt = time.time()
+        print(f'State range: {x_s[k, :].min():.2f} - {x_s[k, :].max():.2f}')
+        if len(state_lim) == n_dim:
+
+            bounds_flag = False
+            
+            # Define initial guess as unconstrained state vector with bounds enforced on parameters outside of range
+            x_0 = np.zeros_like(x_s[k, :])
+
+            for i in range(len(x_0)):
+                # Enforce parameter bounds
+                if x_s[k, i] < state_lim[i][0]:
+                    x_0[i] = state_lim[i][0]
+                    bounds_flag = True
+
+                elif x_s[k, i] > state_lim[i][1]:
+                    x_0[i] = state_lim[i][1]
+                    bounds_flag = True
+                
+                else:
+                    x_0[i] = x_s[k, i]
+                
+            # If value is less than the previous one, set to be previous one
+            for i in range(len(x_0)):
+                if x_0[i] > x_s[k + 1, i]:
+                    x_0[i] = x_s[k + 1, i]
+    
+            # If at least one value falls outside of the supplied bounds, perform optimization
+            if bounds_flag:
+                print('Constraining...')
+                # Define monotonic increase constraint (or decrease if in backward smoothing mode)
+                if (k < n_obs - 1):
+                    # State at k should be less than at state k - 1
+                    constraints = (
+                                    {'type': 'ineq', 'fun': lambda x: x_s[k + 1, n_patch:2*n_patch] - x[n_patch:2*n_patch]}, # W_k+1 - W_k >= 0
+                                    )
+
+                else:
+                    # There is no reference state if at k = n_obs - 1
+                    constraints = ()
+
+                # Define cost function for optimization
+                # if cost_function == 'joint':
+                #     # cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(P_a[k, :, :]**-1 * (x - x_a[k, :]), ord=2)
+                #     cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(x - x_a[k, :], ord=2)
+                # else:
+                cost_function = lambda x: np.linalg.norm(x - x_s[k, :], ord=2)
+                # cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(x - x_s[k, :], ord=2)
+
+                # # Perform minimization
+                if constrain:
+                    results = minimize(cost_function, x_0, bounds=state_lim, method='COBYLA', constraints=constraints, tol=1e-6)
+                    end_opt = time.time() - start_opt
+
+                    x_s[k, :] = results.x
+
+                    print(f'Constraint time: {end_opt:.2f} s')
+                    
+                else:
+                    end_opt = 0
+                    x_s[k, :] = x_0
+
+                print(f'Updated state range: {x_s[k, :].min():.2f} - {x_s[k, :].max():.2f}')
+                
+            else:
+                print(f'Step {k} state is within bounds')
+                end_opt = 0
+
+
+    for k in range(n_obs):
+        H = make_observation_matrix(G, L, t=dt*k)
+
+        # Compute error terms
+        pred        = H @ x_s[k, :]
+        model[k, :] = pred[:n_data]
+        resid[k, :] = (d[k, :] - pred)[:n_data]
+        rms[k]      = np.sqrt(np.mean(resid[k, :]**2))  
+
+
+    end_total = time.time() - start_total
+    print('##### Backward smoothing complete #####')
+    print(f'Elapsed time: {end_total/60:.1f} min')
+    print()
+
+    return KalmanFilterResults(model, resid, rms, x_s=x_s, P_s=P_s, backward_smoothing=True)
+    # return   
+
+
+def backward_smoothing_old(x_f, x_a, P_f, P_a, d, dt, G, L, T, constrain=False, state_lim=[], cost_function='state'):
     """
     Dimensions:
     n_obs  - # of time points
@@ -1509,45 +1624,83 @@ def backward_smoothing(x_f, x_a, P_f, P_a, d, dt, G, L, T, state_lim=[], cost_fu
         x_s[k, :]    = x_a[k, :] + S[k, :, :] @ (x_s[k + 1, :] - x_f[k + 1, :])
         P_s[k, :, :] = P_a[k, :] + S[k, :, :] @ (P_s[k + 1, :, :] - P_f[k + 1, :, :]) @ S[k, :, :].T
         
-        # Constrain state estimate 
+         # Constrain state estimate 
+        start_opt = time.time()
+        print(f'State range: {x_a[k, :].min():.2f} - {x_a[k, :].max():.2f}')
         if len(state_lim) == n_dim:
+
             bounds_flag = False
             
             # Define initial guess as unconstrained state vector with bounds enforced on parameters outside of range
             x_0 = np.zeros_like(x_s[k, :])
 
-            for i in range(len(x_s[k, :])):
+            for i in range(len(x_0)):
+                # Enforce parameter bounds
                 if x_s[k, i] < state_lim[i][0]:
                     x_0[i] = state_lim[i][0]
                     bounds_flag = True
+
                 elif x_s[k, i] > state_lim[i][1]:
                     x_0[i] = state_lim[i][1]
                     bounds_flag = True
+                
                 else:
                     x_0[i] = x_s[k, i]
+                
+            # If value is less than the previous one, set to be previous one
+            for i in range(len(x_0)):
+                if k < len(n_obs):
+                    if backward_smoothing:
+                        if x_a[k, i] > x_s[k - 1, i]:
+                            x_0[i] = x_s[k - 1, i]
+                    elif x_a[k, i] < x_s[k - 1, i]:
+                            x_0[i] = x_s[k - 1, i]
 
             # If at least one value falls outside of the supplied bounds, perform optimization
             if bounds_flag:
-                print(f'Constraining k = {k}...')
+                print('Constraining...')
                 # Define monotonic increase constraint (or decrease if in backward smoothing mode)
+                if k != 0:
+                    if backward_smoothing:
+                        # State at k should be less than at state k - 1
+                        constraints = (
+                                        {'type': 'ineq', 'fun': lambda x: x_s[k - 1, n_patch:2*n_patch] - x[n_patch:2*n_patch]}, # W_k-1 - W_k >= 0
+                                        )
+                    else:
+                        # State at k should be greater than at state k - 1
+                        constraints = (
+                                        {'type': 'ineq', 'fun': lambda x: x[n_patch:2*n_patch] - x_s[k - 1, n_patch:2*n_patch]}, # W_k - W_k-1 >= 0
+                                        )
+                else:
+                    # There is no reference state if at k = 0
+                    constraints = ()
 
-                # State at k should be less than at state k - 1
-                constraints = (
-                                {'type': 'ineq', 'fun': lambda x: x_s[k + 1, n_patch:2*n_patch] - x[n_patch:2*n_patch]}, # W_k+1 - W_k >= 0
-                                )
-
+                # Define cost function for optimization
+                # if cost_function == 'joint':
+                #     # cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(P_a[k, :, :]**-1 * (x - x_a[k, :]), ord=2)
+                #     cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(x - x_a[k, :], ord=2)
+                # else:
                 cost_function = lambda x: np.linalg.norm(x - x_s[k, :], ord=2)
+                # cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(x - x_s[k, :], ord=2)
 
-                # Perform minimization
-                start_opt = time.time()
-                results   = minimize(cost_function, x_0, bounds=state_lim, method='SLSQP', constraints=constraints, tol=1e-6)
-                end_opt   = time.time() - start_opt
+                # # Perform minimization
+                if constrain:
+                    results = minimize(cost_function, x_0, bounds=state_lim, method='COBYLA', constraints=constraints, tol=1e-6)
+                    end_opt = time.time() - start_opt
 
-                # Update analysis state
-                x_s[k, :] = results.x 
+                    x_s[k, :] = results.x
 
+                    print(f'Constraint time: {end_opt:.2f} s')
+
+                else:
+                    end_opt = 0
+                    x_s[k, :] = x_0
+
+                print(f'Updated state range: {x_s[k, :].min():.2f} - {x_s[k, :].max():.2f}')
+                
             else:
                 print(f'Step {k} state is within bounds')
+                end_opt = 0
 
 
     for k in range(n_obs):
@@ -1565,7 +1718,7 @@ def backward_smoothing(x_f, x_a, P_f, P_a, d, dt, G, L, T, state_lim=[], cost_fu
     print(f'Elapsed time: {end_total/60:.1f} min')
     print()
 
-    return KalmanFilterResults(x_f, x_a, P_f, P_a, model, resid, rms, x_s=x_s, P_s=P_s, backward_smoothing=True)
+    return KalmanFilterResults(model, resid, rms, x_f=x_f, x_a=x_a, P_f=P_f, P_a=P_a, x_s=x_a, P_s=P_a, backward_smoothing=True)
     # return   
 
 
@@ -1953,6 +2106,35 @@ def plot_matrix(A, cmap='coolwarm'):
     return
 
 
+def plot_slip_history(x, y, c, vmin=0, vmax=10, tick_inc=5, cmap=cmc.lajolla_r, label='Slip (mm)', hlines=[], 
+                        title='', figsize=(10, 6), file_name='', show=False, dpi=300):
+    """
+    Make heatmap of slip/slip rate history.
+    """
+    
+    fig, ax = plt.subplots(figsize=figsize)
+    im = ax.pcolormesh(x, y, c, shading='nearest', cmap=cmap, vmin=vmin, vmax=vmax)
+
+    if len(hlines) > 0:
+        ax.hlines(hlines, x.min(), x.max(), color='gainsboro', linestyle='--')
+    
+    ax.set_ylim(y[-1], y[0])
+    ax.set_aspect(1/100)
+    ax.set_xlabel('Distance (km)')
+    ax.set_ylabel('Date')
+    ax.set_facecolor('gainsboro')
+    ax.set_title(title)
+    plt.colorbar(im, label=label, shrink=0.5, ticks=np.arange(vmin, vmax + tick_inc, tick_inc))
+    plt.tight_layout()
+
+    if len(file_name) > 0:
+        plt.savefig(file_name, dpi=dpi)
+
+    if show:
+        plt.show()
+    return
+
+
 # ------------------ Classes ------------------
 class KalmanFilterResults:
 
@@ -1974,17 +2156,21 @@ class KalmanFilterResults:
         self.backward_smoothing = backward_smoothing
 
         if backward_smoothing:
-            self.x_s   = x_s[::-1, :]
-            self.P_s   = P_s[:2, :, :]
-            self.model = model[::-1, :]
-            self.resid = resid[::-1]
-            self.rms   = rms[::-1]
-
+            # self.x_s   = x_s[::-1, :]
+            # self.P_s   = P_s[::-1, :]
+            # self.model = model[::-1, :]
+            # self.resid = resid[::-1]
+            # self.rms   = rms[::-1]
+            self.x_s   = x_s
+            self.P_s   = P_s
+            self.model = model
+            self.resid = resid
+            self.rms   = rms
         else:
             self.x_f   = x_f
             self.x_a   = x_a
-            self.P_f   = P_f[-2:, :, :]
-            self.P_a   = P_a[-2:, :, :]
+            self.P_f   = P_f
+            self.P_a   = P_a
 
             self.model = model
             self.resid = resid
