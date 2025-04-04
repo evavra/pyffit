@@ -11,13 +11,13 @@ import cmcrameri.cm as cmc
 
 # -------------------------- Required parameters --------------------------
 # Run mode(s)
-mode = ['NIF'] # NIF for standard NIF run              
+mode = ['NIF', 'analyze'] # NIF for standard NIF run              
 
 # Files and directories
 mesh_file           = '/raid/class239/ellis/SSAF/NIF/mesh/mesh_points.txt'
 triangle_file       = '/raid/class239/ellis/SSAF/NIF/mesh/mesh_connectivity.txt'
-downsampled_dir     = '/raid/class239/ellis/SSAF/NIF/mesh/data/high_resolution/downsampled_data'
-out_dir             = '/raid/class239/ellis/SSAF/NIF/mesh/data/high_resolution'
+downsampled_dir     = '/raid/class239/ellis/SSAF/NIF/data/high_resolution/downsampled_data'
+out_dir             = '/raid/class239/ellis/SSAF/NIF/data/high_resolution'
 data_dir            = '/raid/class239/ellis/SSAF/timeseries/decomposed/filt'
 file_format         = 'u_para_*_filt_10km.grd'
 
@@ -55,9 +55,7 @@ m0                  = [0.9, 1.5, 5]
 c_max               = 2
 sv_max              = 2
 
-# Geographic parameters
-# EPSG        = '32611' 
-# data_region = [-116.4, -115.7, 33.25, 34.0]
+# Geographic parameter
 ref_point   = [-116, 33.5]
 avg_strike  = 315.8
 trace_inc   = 0.01
@@ -80,20 +78,21 @@ smoothing_samp       = False
 edge_slip_samp       = False
 
 # NIF parameters
-omega           = 1e2   # temporal smoothing hyperparameter
+omega           = 1e3   # temporal smoothing hyperparameter
 sigma           = 1e1   # data covariance scaling hyperparameter (Note: for single dataset, and single kappa value for steady-state velocity, transient slip, and transient velocity, sigma becomes reduntant)
 # kappa           = 1e2   # spatial smoothing hyperparameter
-kappa           = 2e1   # spatial smoothing hyperparameter
+kappa           = 1e0   # spatial smoothing hyperparameter
 mu              = kappa # spatial smoothing hyperparameter
 eta             = kappa # zero-edge-slip hyperparameter
-
-
+  
 # Uncertainties and limits
-v_sigma         = 1e-9    # initial uncertainty on interseimic slip rate (mm/yr) 
+steady_slip     = False    # Include constant slip rate in state vector
+constrain       = True     # Perform nonlinear solve for constrained state vector
+v_sigma         = 1e-9     # initial uncertainty on interseimic slip rate (mm/yr) 
 W_sigma         = 10       # initial uncertainty on transient slip (mm) 
 W_dot_sigma     = 10       # initial uncertainty on transient slip rate (mm/yr) \
 
-v_lim           = (0, 3)  # min./max. bounds on steady slip rate values (mm/yr)
+v_lim           = (0, 0.1)  # min./max. bounds on steady slip rate values (mm/yr)
 W_lim           = (0, 100) # min./max. bounds on transient slip values (mm)
 W_dot_lim       = (0, 100) # min./max. bounds on transient rate slip values (mm/yr)
 
