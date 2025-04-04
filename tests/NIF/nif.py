@@ -23,6 +23,9 @@ import datetime
 from types import ModuleType
 from numba import jit
 
+from collections import Counter
+import linecache
+import tracemalloc
 
 def main():
     """
@@ -53,6 +56,7 @@ def main():
     print(f'Total run time: {end/60:.2f}')
 
     return
+
 
 # greens_function_dir='.',
 # ------------------ Task coordination ------------------
@@ -97,7 +101,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
             shear_modulus=6*10**9, disp_components=[1], slip_components=[0], resolution_threshold=2.3e-1, 
             width_min=0.1, width_max=10, max_intersect_width=100, min_fault_dist=1, max_iter=10, 
             smoothing_samp=False, edge_slip_samp=False,  omega=1e1, sigma=1e1, kappa=2e1, mu=2e1, 
-            eta=2e1, constrain=False, v_sigma=1e-9, W_sigma=1,  W_dot_sigma=1, v_lim=(0,3), W_lim=(0,30), W_dot_lim=(0,50), 
+            eta=2e1, steady_slip=False, constrain=False, v_sigma=1e-9, W_sigma=1,  W_dot_sigma=1, v_lim=(0,3), W_lim=(0,30), W_dot_lim=(0,50), 
             xlim=[-35.77475071,26.75029172], ylim=[-26.75029172, 55.08597388], vlim_slip=[0, 20], 
             vlim_disp=[[-10,10], [-10,10], [-1,1]], cmap_disp=cmc.vik, figsize=(10, 10), dpi=75, markersize=40, 
             param_file='params.py',
@@ -119,8 +123,11 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
                                          poisson_ratio=poisson_ratio, shear_modulus=shear_modulus, 
                                          verbose=False, trace_inc=trace_inc, mu=mu, eta=eta)
     n_patch = len(fault.triangles)
-    n_dim   = 3 * n_patch
 
+    if steady_slip:
+        n_dim   = 3 * n_patch
+    else:
+        n_dim   = 2 * n_patch
 
     # Load data
     dataset = pyffit.data.load_insar_dataset(data_dir, file_format, dataset_name, ref_point, data_factor=data_factor, xkey=xkey, 
@@ -173,16 +180,24 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     d         = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{samp_file}.pkl')
 
     # Load results
-    results_forward = read_kalman_filter_results(f'{run_dir}/results_forward.h5')
-    x_model_forward = results_forward.x_a
+    # results_forward = read_kalman_filter_results(f'{run_dir}/results_forward.h5')
+    # x_model_forward = results_forward.x_a
+    results_forward = h5py.File(f'{run_dir}/results_forward.h5', 'r')
+    x_model_forward = results_forward['x_a']
 
-    results_smoothing = read_kalman_filter_results(f'{run_dir}/results_smoothing.h5')
-    x_model = results_smoothing.x_s
+    # results_smoothing = read_kalman_filter_results(f'{run_dir}/results_smoothing.h5')
+    # x_model = results_smoothing.x_s
+    results_smoothing = h5py.File(f'{run_dir}/results_smoothing.h5', 'r')
+    x_model           = results_smoothing['x_s']
 
     # Compute integrated slip
-    s_model_forward = integrate_slip(results_forward.x_a, dt)
-    s_model         = integrate_slip(results_smoothing.x_s, dt)
-    s_true          = slip_model[:, 0, :].T
+    if steady_slip:
+        s_model_forward = integrate_slip(results_forward['x_a'], dt)
+        s_model         = integrate_slip(results_smoothing['x_s'], dt)
+    else:
+        s_model_forward = x_model_forward[:, :n_patch]
+        s_model = x_model[:, :n_patch]
+    s_true = slip_model[:, 0, :].T
 
     # Compute integrated slip
     # slip_model = integrate_slip(results_smoothing.x_s, dt)
@@ -211,6 +226,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     slip_history = np.empty((s_model.shape[0], n_z, n_x))
 
     # Interpolate slip history to regurlar grid
+    print(x_center.shape, z_center.shape, s_model.shape)
     for k in range(len(s_model)):
         slip_history[k, :, :] = griddata((x_center, z_center), s_model[k, :], (x_grid, z_grid), method='cubic')
 
@@ -313,8 +329,8 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     ax.set_xlabel('Time')
     ax.set_ylabel('Residual (mm)')
     # ax.set_xlim(0, 200)
-    ax.plot(dataset.date, np.mean(np.abs(results_forward.resid), axis=1), c='C0', alpha=1.0, zorder=0, label='Filtered')
-    ax.plot(dataset.date, np.mean(np.abs(results_smoothing.resid), axis=1), c='C3', alpha=1.0, zorder=0, label='Smoothed')
+    ax.plot(dataset.date, np.mean(np.abs(results_forward['resid']), axis=1), c='C0', alpha=1.0, zorder=0, label='Filtered')
+    ax.plot(dataset.date, np.mean(np.abs(results_smoothing['resid']), axis=1), c='C3', alpha=1.0, zorder=0, label='Smoothed')
     ax.legend()
     plt.savefig(f'{result_dir}/Evolution_residuals.png', dpi=300)
     plt.close()
@@ -324,8 +340,8 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     ax.set_xlabel('Time')
     ax.set_ylabel('RMS (mm)')
     # ax.set_xlim(0, 200)
-    ax.plot(dataset.date, results_forward.rms, c='C0', alpha=1, zorder=0, label='Filtered')
-    ax.plot(dataset.date, results_smoothing.rms, c='C3', alpha=1, zorder=0, label='Smoothed')
+    ax.plot(dataset.date, results_forward['rms'][()], c='C0', alpha=1, zorder=0, label='Filtered')
+    ax.plot(dataset.date, results_smoothing['rms'][()], c='C3', alpha=1, zorder=0, label='Smoothed')
     ax.legend()
     plt.savefig(f'{result_dir}/Evolution_rms.png', dpi=300)
     plt.close()
@@ -334,30 +350,32 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     ax.set_xlabel('Time')
     ax.set_ylabel('Change in RMS (mm)')
     # ax.set_xlim(0, 200)
-    ax.plot(dataset.date, results_forward.rms - results_smoothing.rms, c='k', alpha=1, zorder=0, label='Filtered - smoothed')
+    ax.plot(dataset.date, results_forward['rms'][()] - results_smoothing['rms'][()], c='k', alpha=1, zorder=0, label='Filtered - smoothed')
     ax.legend()
     plt.savefig(f'{result_dir}/Evolution_rms_diff.png', dpi=300)
     plt.close()
 
+
     # -------------------- Slip rate v --------------------
-    fig, ax = plt.subplots(figsize=(6, 4))
+    if steady_slip:
+        fig, ax = plt.subplots(figsize=(6, 4))
 
-    for i in range(0, n_patch):
-        ax.plot(dataset.date, results_forward.x_a[:, i], c='C0', alpha=0.2,)
-        ax.plot(dataset.date, results_smoothing.x_s[:, i], c='C3', alpha=0.2, )
+        for i in range(0, n_patch):
+            ax.plot(dataset.date, results_forward['x_a'][:, i], c='C0', alpha=0.2,)
+            ax.plot(dataset.date, results_smoothing['x_s'][:, i], c='C3', alpha=0.2,)
 
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Slip rate (mm/yr)')
-    ax.legend()
-    plt.savefig(f'{result_dir}/Evolution_v.png', dpi=300)
-    plt.close()
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Slip rate (mm/yr)')
+        ax.legend()
+        plt.savefig(f'{result_dir}/Evolution_v.png', dpi=300)
+        plt.close()
 
     # -------------------- Transient slip W --------------------
     fig, ax = plt.subplots(figsize=(6, 4))
 
-    for i in range(n_patch, 2*n_patch):
-        ax.plot(dataset.date, results_forward.x_a[:, i], c='C0', alpha=0.2, )
-        ax.plot(dataset.date, results_smoothing.x_s[:, i], c='C3', alpha=0.2, )
+    for i in range(steady_slip * n_patch, (1 + steady_slip) * n_patch):
+        ax.plot(dataset.date, results_forward['x_a'][:, i], c='C0', alpha=0.2, )
+        ax.plot(dataset.date, results_smoothing['x_s'][:, i], c='C3', alpha=0.2, )
         ax.plot(dataset.date, s_true[:, i - n_patch], c='k', alpha=0.2, )
         
     ax.set_xlabel('Time')
@@ -368,15 +386,15 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     # -------------------- Transient slip rate W_dot --------------------
     fig, ax = plt.subplots(figsize=(6, 4))
 
-    for i in range(2*n_patch, 3*n_patch):
-        ax.plot(dataset.date, results_forward.x_a[:, i], c='C0', alpha=0.2)
-        ax.plot(dataset.date, results_smoothing.x_s[:, i], c='C3', alpha=0.2)
+    for i in range((steady_slip + 1) * n_patch, (steady_slip + 2) * n_patch):
+        ax.plot(dataset.date, results_forward['x_a'][:, i], c='C0', alpha=0.2)
+        ax.plot(dataset.date, results_smoothing['x_s'][:, i], c='C3', alpha=0.2)
 
     ax.set_xlabel('Time')
     ax.set_ylabel('Transient slip rate (mm/yr)')
     plt.savefig(f'{result_dir}/Evolution_W_dot.png', dpi=300)
     plt.close()
-
+    
     # # Plot covariances
     # vlim = np.max(abs(results_forward.P_a[-1, :, :]))
 
@@ -424,8 +442,8 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
 
             data_panels = [
                         dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=d[k, :n_data],       label=dataset_name),
-                        dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results.model[k, :], label='Model'),
-                        dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results.resid[k, :], label=f'Residuals ({np.abs(results.resid[k, :]).mean():.2f}'+ r'$\pm$' + f'{np.abs(results.resid[k, :]).std():.2f})'),
+                        dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results['model'][k, :], label='Model'),
+                        dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results['resid'][k, :], label=f"Residuals ({np.abs(results['resid'][k, :]).mean():.2f}'+ r'$\pm$' + f'{np.abs(results['resid'][k, :]).std():.2f})"),
                         ]
             
             fault_panels = [
@@ -442,7 +460,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     os.environ["OMP_NUM_THREADS"] = "1"
     start       = time.time()
     n_processes = multiprocessing.cpu_count()
-    pool        = multiprocessing.Pool(processes=n_processes)
+    pool        = multiprocessing.Pool(processes=4)
     results     = pool.map(fault_plot_wrapper, params)
     pool.close()
     pool.join()
@@ -499,8 +517,8 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
             m0=[0.9, 1.5, 5], c_max=2, sv_max=2, ref_point=[-116, 33.5], avg_strike=315.8, trace_inc=0.01, poisson_ratio=0.25, 
             shear_modulus=6*10**9, disp_components=[1], slip_components=[0], resolution_threshold=2.3e-1, 
             width_min=0.1, width_max=10, max_intersect_width=100, min_fault_dist=1, max_iter=10, 
-            smoothing_samp=False, edge_slip_samp=False,  omega=1e1, sigma=1e1, kappa=2e1, mu=2e1, 
-            eta=2e1, constrain=False, v_sigma=1e-9, W_sigma=1,  W_dot_sigma=1, v_lim=(0,3), W_lim=(0,30), W_dot_lim=(0,50), 
+            smoothing_samp=False, edge_slip_samp=False, omega=1e1, sigma=1e1, kappa=2e1, mu=2e1, 
+            eta=2e1, steady_slip=False, constrain=False, v_sigma=1e-9, W_sigma=1,  W_dot_sigma=1, v_lim=(0,3), W_lim=(0,30), W_dot_lim=(0,50), 
             xlim=[-35.77475071,26.75029172], ylim=[-26.75029172, 55.08597388], vlim_slip=[0, 20], 
             vlim_disp=[[-10,10], [-10,10], [-1,1]], cmap_disp=cmc.vik, figsize=(10, 10), dpi=75, markersize=40, 
             param_file='params.py'
@@ -539,8 +557,11 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
                                          poisson_ratio=poisson_ratio, shear_modulus=shear_modulus, 
                                          verbose=False, trace_inc=trace_inc, mu=mu, eta=eta)
     n_patch = len(fault.triangles)
-    n_dim   = 3 * n_patch
 
+    if steady_slip:
+        n_dim   = 3 * n_patch
+    else:
+        n_dim   = 2 * n_patch
 
     # Load data
     dataset = pyffit.data.load_insar_dataset(data_dir, file_format, dataset_name, ref_point, data_factor=data_factor, xkey=xkey, 
@@ -552,7 +573,6 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     n_obs    = len(dataset.date)
     x        = dataset.coords['x'].compute().data.flatten()
     y        = dataset.coords['y'].compute().data.flatten()
-
     # dt = convert_timedelta(dataset.date[1] - dataset.date[0], unit='D')
 
     # Load original slip model
@@ -609,15 +629,28 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     # Get Greens Functions
     G = -fault.greens_functions(inputs[dataset_name].tree.x, inputs[dataset_name].tree.y, disp_components=disp_components, slip_components=slip_components, rotation=avg_strike, squeeze=True)
     
+    # Set up model bounds and initial uncertainties
+    if steady_slip:
+        state_lims   = [v_lim, W_lim, W_dot_lim]
+        state_sigmas = [v_sigma, W_sigma, W_dot_sigma]
+    else:
+        state_lims   = [W_lim, W_dot_lim]
+        state_sigmas = [W_sigma, W_dot_sigma]
+    
     # Get bounds on model parameters
-    state_lim = get_state_constraints(fault, [v_lim, W_lim, W_dot_lim])
+    state_lim = get_state_constraints(fault, state_lims)
 
     # Perform forward Kalman filtering
-    x_model_forward, x_model = network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, v_sigma, W_sigma, W_dot_sigma, constrain=constrain, state_lim=state_lim, result_dir=run_dir, cost_function='state')
+    x_model_forward, x_model = network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigmas, steady_slip=steady_slip, constrain=constrain, state_lim=state_lim, result_dir=run_dir, cost_function='state')
 
     # Compute integrated slip
-    s_model_forward = integrate_slip(x_model_forward, dt)
-    s_model         = integrate_slip(x_model, dt)
+    if steady_slip:
+        s_model_forward = integrate_slip(x_model_forward, dt)
+        s_model         = integrate_slip(x_model, dt)
+    else:
+        s_model_forward = x_model_forward[:n_patch]
+        s_model         = x_model[:n_patch]
+        
     s_true          = slip_model[:, 0, :].T
 
     print(f'Forward avg. slip  {np.mean(s_model_forward):.1f} +\- {np.std(s_model_forward):.1f} | range = {s_model_forward.min():.1f} {s_model_forward.max():.1f} | v = {np.mean(x_model_forward[:, :n_patch]):.1e} +/- {np.mean(x_model_forward[:, :n_patch]):.1e} mm/yr')
@@ -1073,8 +1106,34 @@ def fault_plot_wrapper(params):
     return
 
 
+def display_top(snapshot, key_type='lineno', limit=3):
+    snapshot = snapshot.filter_traces((
+        tracemalloc.Filter(False, "<frozen importlib._bootstrap>"),
+        tracemalloc.Filter(False, "<unknown>"),
+    ))
+    top_stats = snapshot.statistics(key_type)
+
+    print("Top %s lines" % limit)
+    for index, stat in enumerate(top_stats[:limit], 1):
+        frame = stat.traceback[0]
+        # replace "/path/to/module/file.py" with "module/file.py"
+        filename = os.sep.join(frame.filename.split(os.sep)[-2:])
+        print("#%s: %s:%s: %.1f KiB"
+              % (index, filename, frame.lineno, stat.size / 1024))
+        line = linecache.getline(frame.filename, frame.lineno).strip()
+        if line:
+            print('    %s' % line)
+
+    other = top_stats[limit:]
+    if other:
+        size = sum(stat.size for stat in other)
+        print("%s other: %.1f KiB" % (len(other), size / 1024))
+    total = sum(stat.size for stat in top_stats)
+    print("Total allocated size: %.1f KiB" % (total / 1024))
+
+
 # ------------------ NIF ------------------
-def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, v_sigma, W_sigma, W_dot_sigma, constrain=False, state_lim=[], result_dir='.', cost_function='state'):
+def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigmas, steady_slip=False, constrain=False, state_lim=[], result_dir='.', cost_function='state'):
     """
     Invert time series of surface displacements for fault slip.
     Based on the method of Bekaert et al. (2016)
@@ -1092,7 +1151,11 @@ def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, v_sigma, W
 
     # -------------------- Prepare NIF --------------------
     n_patch = len(fault.triangles)
-    n_dim   = 3 * n_patch
+
+    if steady_slip:
+        n_dim   = 3 * n_patch
+    else:
+        n_dim   = 2 * n_patch
 
     # Form smoothing matrix S
     L = fault.smoothing_matrix
@@ -1101,59 +1164,54 @@ def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, v_sigma, W
     # H = make_observation_matrix(G, fault.smoothing_matrix, t=dt)
 
     # Form transition matrix T
-    T = make_transition_matrix(n_patch, dt)
+    T = make_transition_matrix(n_patch, dt, steady_slip=steady_slip)
 
     # Form process covariance matrix Q
-    Q = make_process_covariance_matrix(n_patch, dt, omega)
+    Q = make_process_covariance_matrix(n_patch, dt, omega, steady_slip=steady_slip)
 
     # Form data covariance matrix R
-    R = make_data_covariance_matrix(C, n_patch, sigma, kappa)
+    R = make_data_covariance_matrix(C, n_patch, sigma, kappa, steady_slip=steady_slip)
 
     # Define initial state vector
     x_init = np.zeros(n_dim)
 
     # Form initial state prediction covariance matrix P_init
-    P_init = make_prediction_covariance_matrix(n_patch, v_sigma, W_sigma, W_dot_sigma)
+    P_init = make_prediction_covariance_matrix(n_patch, state_sigmas)
 
     # -------------------- Run NIF --------------------
     # # 1) Perform forward Kalman filtering
-    results_forward = kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, constrain=constrain, state_lim=state_lim, cost_function=cost_function)
-    write_kalman_filter_results(results_forward, file_name=f'{result_dir}/results_forward.h5')
+    model, resid, rms = kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, steady_slip=steady_slip, constrain=constrain, state_lim=state_lim, cost_function=cost_function, file_name=f'{result_dir}/results_forward.h5')
+    # write_kalman_filter_results(model, resid, rms, x_f=x_f, x_a=x_a, P_f=P_f, P_a=P_a, backward_smoothing=False, file_name=f'{result_dir}/results_forward.h5')
     # results_forward = read_kalman_filter_results(f'{result_dir}/results_forward.h5')
 
-    # Form transition matrix T
-    T = make_transition_matrix(n_patch, -dt)
+    with h5py.File(f'{result_dir}/results_forward.h5', 'r') as file:
+        x_model_forward = file['x_a'][()]
 
+    # Form transition matrix T
+    T = make_transition_matrix(n_patch, -dt, steady_slip=steady_slip)
+    
     # Form process covariance matrix Q
     # Q = make_process_covariance_matrix(n_patch, -dt, omega)
 
     # Perform backward smooothing
     # Update input objects using forward pass results
-    d      = d[::-1, :] # Reverse time
-    x_init = results_forward.x_a[-1, :]    # Use final state estimate as initial state
-    P_init = results_forward.P_a[-1, :, :] # Use final covariance estimate as initial state covariance
-    x_model_forward = results_forward.x_a
+    # d      = d[::-1, :] # Reverse time
+    # x_init = results_forward.x_a[-1, :]    # Use final state estimate as initial state
+    # P_init = results_forward.P_a[-1, :, :] # Use final covariance estimate as initial state covariance
 
     # Clear memory before proceding
-    del results_forward
-    gc.collect()
+    # del results_forward
+    # gc.collect()
 
     # Perform backward smoothing
     # results_smoothing = kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, constrain=constrain, state_lim=state_lim, cost_function=cost_function, backward_smoothing=True)
     # results_smoothing = backward_smoothing(results_forward.x_f, results_forward.x_a, results_forward.P_f, results_forward.P_a, d, dt, G, L, T,constrain=constrain, state_lim=state_lim, cost_function=cost_function)
-    results_smoothing = backward_smoothing(f'{result_dir}/results_forward.h5', d, dt, G, L, T,constrain=constrain, state_lim=state_lim, cost_function=cost_function)
-    write_kalman_filter_results(results_smoothing, file_name=f'{result_dir}/results_smoothing.h5', backward_smoothing=True)
-
-    # with open(f'{result_dir}/results_smoothing.pkl', 'rb') as file:
-        # results_smoothing = pickle.load(file)
+    model, resid, rms, x_s, P_s = backward_smoothing(f'{result_dir}/results_forward.h5', d, dt, G, L, T, steady_slip=steady_slip, constrain=constrain, state_lim=state_lim, cost_function=cost_function)
+    write_kalman_filter_results(model, resid, rms, x_s=x_s, P_s=P_s, backward_smoothing=True, file_name=f'{result_dir}/results_smoothing.h5',)
+    x_model_smoothing = x_s
     
-    x_model_smoothing = results_smoothing.x_s
-
-    # with open(f'{result_dir}/results_smoothing.pkl', 'wb') as file:
-        # pickle.dump(results_smoothing, file)
-    
-    del results_smoothing
-    gc.collect()
+    # del results_smoothing
+    # gc.collect()
 
     # results_smoothing = backward_smoothing(results_forward.x_f, results_forward.x_a, results_forward.P_f, results_forward.P_a, d, dt, G, L, T, 
                                         #    state_lim=state_lim, cost_function='state')
@@ -1161,7 +1219,7 @@ def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, v_sigma, W
     return x_model_forward, x_model_smoothing
 
 
-def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], constrain=False, cost_function='state', backward_smoothing=False):
+def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], steady_slip=False, constrain=False, cost_function='state', backward_smoothing=False, overwrite=True, file_name='results_forward.h5'):
     """
     INPUT:
     x_init (n_dim,)     - intial state (n_dim - # of model parameters) 
@@ -1178,7 +1236,11 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], constrain=
 
     # ---------- Kalman Filter ---------- 
     n_dim   = x_init.size
-    n_patch = x_init.size//3
+    if steady_slip:
+        n_patch = x_init.size//3
+    else:
+        n_patch = x_init.size//2
+
     n_obs   = d.shape[0]
     n_data  = d.shape[1] - n_dim
     x_f     = np.empty((n_obs, n_dim))        # forecasted states
@@ -1204,7 +1266,7 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], constrain=
 
         # Update observation matrix H        
         start_H = time.time()
-        H = make_observation_matrix(G, L, t=dt*k)
+        H = make_observation_matrix(G, L, t=dt*k, steady_slip=steady_slip)
         end_H = time.time() - start_H
         print(f'H-matrix time: {end_H:.2f} s')
 
@@ -1341,6 +1403,7 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], constrain=
         end_step = time.time() - start_step
         print(f'Step {k} time: {end_step:.2f} s (inv: {end_pinv/end_step * 100:.1f} %, opt: {end_opt/end_step * 100:.1f} %, other: {(end_step - end_pinv - end_opt)/end_step * 100:.1f} %)')
 
+
     end_total = time.time() - start_total
 
     if backward_smoothing:
@@ -1350,49 +1413,9 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], constrain=
     print(f'Elapsed time: {end_total/60:.1f} min')
     print()
 
-    return KalmanFilterResults(model, resid, rms, x_f=x_f, x_a=x_a, P_f=P_f, P_a=P_a, x_s=x_a, P_s=P_a, backward_smoothing=backward_smoothing)
+    # return KalmanFilterResults(model, resid, rms, x_f=x_f, x_a=x_a, P_f=P_f, P_a=P_a, x_s=x_a, P_s=P_a, backward_smoothing=backward_smoothing)
 
-
-def read_kalman_filter_results(file_name):
-    """
-    Read Kalman filter results file and add to KalmanFilterResults object
-    """
-
-    with h5py.File(f'{file_name}', 'r') as file:
-
-        for key in file.keys():
-            print(key)
-        backward_smoothing = file['backward_smoothing'][()]
-
-        if backward_smoothing:
-            # model = file['model'][()][::-1]  
-            # resid = file['resid'][()][::-1]  
-            # rms   = file['rms'][()][::-1]    
-            # x_s = file['x_s'][()][::-1] 
-            # P_s = file['P_s'][()][::-1] 
-            model = file['model'][()]  
-            resid = file['resid'][()]  
-            rms   = file['rms'][()]    
-            x_s = file['x_s'][()] 
-            P_s = file['P_s'][()] 
-            return KalmanFilterResults(model, resid, rms, x_s=x_s, P_s=P_s, backward_smoothing=backward_smoothing)
-
-        else:
-            model = file['model'][()] 
-            resid = file['resid'][()] 
-            rms   = file['rms'][()]   
-            x_f = file['x_f'][()] 
-            x_a = file['x_a'][()] 
-            P_f = file['P_f'][()] 
-            P_a = file['P_a'][()] 
-            return KalmanFilterResults(model, resid, rms, x_f=x_f, x_a=x_a, P_f=P_f, P_a=P_a, backward_smoothing=backward_smoothing)
-
-
-def write_kalman_filter_results(results, file_name='results.h5', overwrite=True, backward_smoothing=False):
-    """
-    Write Kalman filter results to HDF5 file.
-    """
-
+    # Save results
     if os.path.exists(file_name):
         if overwrite:
             os.remove(file_name)
@@ -1403,27 +1426,41 @@ def write_kalman_filter_results(results, file_name='results.h5', overwrite=True,
 
     with h5py.File(f'{file_name}', 'w') as file:
 
-        file.create_dataset('model', data=results.model)
-        file.create_dataset('resid', data=results.resid)
-        file.create_dataset('rms',   data=results.rms)
-        file.create_dataset('backward_smoothing', data=results.backward_smoothing)
+        file.create_dataset('model', data=model)
+        file.create_dataset('resid', data=resid)
+        file.create_dataset('rms',   data=rms)
+        file.create_dataset('backward_smoothing', data=backward_smoothing)
 
         if backward_smoothing:
-            file.create_dataset('x_s', data=results.x_s)
-            file.create_dataset('P_s', data=results.P_s)
+            file.create_dataset('x_s', data=x_a)
+            file.create_dataset('P_s', data=P_a)
+            del P_a
+            gc.collect()
+
         else:
-            file.create_dataset('x_f', data=results.x_f)
-            file.create_dataset('P_f', data=results.P_f)
+            print('Saving forecast...')
+            file.create_dataset('x_f', data=x_f)
+            file.create_dataset('P_f', data=P_f)
+            del P_f
+            gc.collect()
 
     if not backward_smoothing:
         with h5py.File(f'{file_name}', 'a') as file:
-            file.create_dataset('x_a', data=results.x_a)
-            file.create_dataset('P_a', data=results.P_a)
+            print('Saving analysis...')
+            file.create_dataset('x_a', data=x_a)
+            file.create_dataset('P_a', data=P_a)
+            del P_a
+            gc.collect()
 
-    return
+
+    # if backward_smoothing:
+    #     return model, resid, rms, x_a, P_a
+    # else:
+        # return model, resid, rms, x_f, x_a, P_f, P_a
+    return model, resid, rms
 
 
-def backward_smoothing(result_file, d, dt, G, L, T, constrain=False, state_lim=[], cost_function='state'):
+def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, constrain=False, state_lim=[], cost_function='state'):
     """
     Dimensions:
     n_obs  - # of time points
@@ -1447,7 +1484,10 @@ def backward_smoothing(result_file, d, dt, G, L, T, constrain=False, state_lim=[
     # Get lengths
     n_obs   = x_f.shape[0]
     n_dim   = x_f.shape[1]
-    n_patch = n_dim//3
+    if steady_slip:
+        n_patch = n_dim//3
+    else:
+        n_patch = n_dim//2    
     n_data  = d.shape[1] - n_dim
 
     # Initialize
@@ -1457,12 +1497,6 @@ def backward_smoothing(result_file, d, dt, G, L, T, constrain=False, state_lim=[
     model   = np.empty((n_obs, n_data))
     resid   = np.empty((n_obs, n_data))
     rms     = np.empty((n_obs,))
-
-    # # Define cost function for optimization
-    # if cost_function == 'joint':
-    #     # cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(P_a[k, :, :]**-1 * (x - x_a[k, :]), ord=2)
-    #     cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(x - x_a[k, :], ord=2)
-    # else:
 
     print(f'\n##### Running backward smoothing ##### ')
 
@@ -1478,12 +1512,13 @@ def backward_smoothing(result_file, d, dt, G, L, T, constrain=False, state_lim=[
         S[k, :, :] = file['P_a'][k, :, :] @ T.T @ P_f_inv
 
         # Get smoothed states and covariances
-        x_s[k, :]    = x_a[k, :] + S[k, :, :] @ (x_s[k + 1, :] - x_f[k + 1, :])
+        x_s[k, :]    =         x_a[k, :] + S[k, :, :] @ (x_s[k + 1, :]               - x_f[k + 1, :])
         P_s[k, :, :] = file['P_a'][k, :] + S[k, :, :] @ (P_s[k + 1, :, :] - file['P_f'][k + 1, :, :]) @ S[k, :, :].T
         
          # Constrain state estimate 
         start_opt = time.time()
         print(f'State range: {x_s[k, :].min():.2f} - {x_s[k, :].max():.2f}')
+        
         if len(state_lim) == n_dim:
 
             bounds_flag = False
@@ -1550,7 +1585,6 @@ def backward_smoothing(result_file, d, dt, G, L, T, constrain=False, state_lim=[
                 print(f'Step {k} state is within bounds')
                 end_opt = 0
 
-
     for k in range(n_obs):
         H = make_observation_matrix(G, L, t=dt*k)
 
@@ -1561,13 +1595,123 @@ def backward_smoothing(result_file, d, dt, G, L, T, constrain=False, state_lim=[
         rms[k]      = np.sqrt(np.mean(resid[k, :]**2))  
 
 
+    file.close()
+    gc.collect()
     end_total = time.time() - start_total
     print('##### Backward smoothing complete #####')
     print(f'Elapsed time: {end_total/60:.1f} min')
     print()
 
-    return KalmanFilterResults(model, resid, rms, x_s=x_s, P_s=P_s, backward_smoothing=True)
-    # return   
+    return model, resid, rms, x_s, P_s
+
+
+def read_kalman_filter_results(file_name):
+    """
+    Read Kalman filter results file and add to KalmanFilterResults object
+    """
+
+    with h5py.File(f'{file_name}', 'r') as file:
+
+        for key in file.keys():
+            print(key)
+        backward_smoothing = file['backward_smoothing'][()]
+
+        if backward_smoothing:
+            # model = file['model'][()][::-1]  
+            # resid = file['resid'][()][::-1]  
+            # rms   = file['rms'][()][::-1]    
+            # x_s = file['x_s'][()][::-1] 
+            # P_s = file['P_s'][()][::-1] 
+            model = file['model'][()]  
+            resid = file['resid'][()]  
+            rms   = file['rms'][()]    
+            x_s = file['x_s'][()] 
+            P_s = file['P_s'][()] 
+            return KalmanFilterResults(model, resid, rms, x_s=x_s, P_s=P_s, backward_smoothing=backward_smoothing)
+
+        else:
+            model = file['model'][()] 
+            resid = file['resid'][()] 
+            rms   = file['rms'][()]   
+            x_f = file['x_f'][()] 
+            x_a = file['x_a'][()] 
+            P_f = file['P_f'][()] 
+            P_a = file['P_a'][()] 
+            return KalmanFilterResults(model, resid, rms, x_f=x_f, x_a=x_a, P_f=P_f, P_a=P_a, backward_smoothing=backward_smoothing)
+
+
+def write_kalman_filter_results(model, resid, rms, x_f=[], x_a=[], P_f=[], P_a=[], x_s=[], P_s=[], backward_smoothing=False, file_name='results.h5', overwrite=True):
+    """
+    Write Kalman filter results to HDF5 file.
+    """
+
+    if os.path.exists(file_name):
+        if overwrite:
+            os.remove(file_name)
+        else:
+            print(f'Error! {file_name} already exists.')
+            print(f'Set "overwrite=True" to replace')
+            sys.exit(1)
+
+    with h5py.File(f'{file_name}', 'w') as file:
+
+        file.create_dataset('model', data=model)
+        file.create_dataset('resid', data=resid)
+        file.create_dataset('rms',   data=rms)
+        file.create_dataset('backward_smoothing', data=backward_smoothing)
+
+        if backward_smoothing:
+            file.create_dataset('x_s', data=x_s)
+            file.create_dataset('P_s', data=P_s)
+        else:
+            print('Saving forecast...')
+            file.create_dataset('x_f', data=x_f)
+            file.create_dataset('P_f', data=P_f)
+            del P_f
+            gc.collect()
+
+    if not backward_smoothing:
+        with h5py.File(f'{file_name}', 'a') as file:
+            print('Saving analysis...')
+            file.create_dataset('x_a', data=x_a)
+            file.create_dataset('P_a', data=P_a)
+
+    return
+
+
+def write_kalman_filter_results_old(results, file_name='results.h5', overwrite=True, backward_smoothing=False):
+    """
+    Write Kalman filter results to HDF5 file.
+    """
+
+    if os.path.exists(file_name):
+        if overwrite:
+            os.remove(file_name)
+        else:
+            print(f'Error! {file_name} already exists.')
+            print(f'Set "overwrite=True" to replace')
+            sys.exit(1)
+
+    with h5py.File(f'{file_name}', 'w') as file:
+
+        file.create_dataset('model', data=results.model)
+        file.create_dataset('resid', data=results.resid)
+        file.create_dataset('rms',   data=results.rms)
+        file.create_dataset('backward_smoothing', data=results.backward_smoothing)
+
+        if backward_smoothing:
+            file.create_dataset('x_s', data=results.x_s)
+            file.create_dataset('P_s', data=results.P_s)
+        else:
+            file.create_dataset('x_f', data=results.x_f)
+            file.create_dataset('P_f', data=results.P_f)
+
+    if not backward_smoothing:
+        with h5py.File(f'{file_name}', 'a') as file:
+            file.create_dataset('x_a', data=results.x_a)
+            file.create_dataset('P_a', data=results.P_a)
+
+    return
 
 
 def backward_smoothing_old(x_f, x_a, P_f, P_a, d, dt, G, L, T, constrain=False, state_lim=[], cost_function='state'):
@@ -1722,7 +1866,7 @@ def backward_smoothing_old(x_f, x_a, P_f, P_a, d, dt, G, L, T, constrain=False, 
     # return   
 
 
-def make_observation_matrix(G, R, t=1):
+def make_observation_matrix(G, R, t=1, steady_slip=False):
     """
     Form observation from Greens function matrix G and smoothing matrix R.
     """
@@ -1730,13 +1874,21 @@ def make_observation_matrix(G, R, t=1):
     zeros_G = np.zeros_like(G)
     zeros_R = np.zeros_like(R)
 
-    # Form rows
-    data         = np.hstack((  G * t,       G, zeros_G))
-    v_smooth     = np.hstack((      R, zeros_R, zeros_R))
-    W_smooth     = np.hstack((zeros_R,       R, zeros_R))
-    W_dot_smooth = np.hstack((zeros_R, zeros_R,       R))
-    H            = np.vstack((data, v_smooth, W_smooth, W_dot_smooth))
+    if steady_slip:
+        # Form rows
+        data         = np.hstack((  G * t,       G, zeros_G))
+        v_smooth     = np.hstack((      R, zeros_R, zeros_R))
+        W_smooth     = np.hstack((zeros_R,       R, zeros_R))
+        W_dot_smooth = np.hstack((zeros_R, zeros_R,       R))
+        H            = np.vstack((data, v_smooth, W_smooth, W_dot_smooth))
    
+    else:
+        # Form rows
+        data         = np.hstack((      G, zeros_G))
+        W_smooth     = np.hstack((      R, zeros_R))
+        W_dot_smooth = np.hstack((zeros_R,       R))
+        H            = np.vstack((data, W_smooth, W_dot_smooth))
+
     # Plot 
     # fig, ax = plt.subplots(figsize=(14, 8.2))
     # ax.imshow(H[:10000, :], cmap='coolwarm', vmin=-1e-4, vmax=1e-4)
@@ -1746,84 +1898,119 @@ def make_observation_matrix(G, R, t=1):
     return H
 
 
-def make_transition_matrix(n_dim, dt):
+def make_transition_matrix(n_patch, dt, steady_slip=False):
     """
     Form transtion matrix from Greens function matrix G and smoothing matrix R.
     """
 
-    # Form base matrices
-    I     = np.eye(n_dim)
-    zeros = np.zeros((n_dim, n_dim))
+    if steady_slip:
+        n_dim = 3 * n_patch
+    else:
+        n_dim = 2 * n_patch
 
-    # Form rows
-    v     = np.hstack((    I,  zeros,  zeros))
-    W     = np.hstack((zeros,      I, I * dt))
-    W_dot = np.hstack((zeros,  zeros,      I))
+    T = np.eye(n_dim)
+    T[-2*n_patch:-n_patch, -n_patch:] = np.eye(n_patch) * dt # add slip rate term
 
-    T     = np.vstack((v, W, W_dot))
-   
+    # # Form base matrices
+    # I     = np.eye(n_patch)
+    # zeros = np.zeros((n_patch, n_patch))
+    # # Form rows
+    # v     = np.hstack((    I,  zeros,  zeros))
+    # W     = np.hstack((zeros,      I, I * dt))
+    # W_dot = np.hstack((zeros,  zeros,      I))
+    # T     = np.vstack((v, W, W_dot))
+
     return T
 
 
-def make_prediction_covariance_matrix(n_patch, v_sigma, W_sigma, W_dot_sigma):
+def make_prediction_covariance_matrix(n_patch, state_sigmas):
     """
-    Form initial prediction covariance matrix P_0 based on uncertainties on model parameters v, W, and W_dot.
-    v_sigma, W_sigma, W_dot_sigma should have units of v, W, W_dot (mm/yr and mm, typically)
+    Form initial prediction covariance matrix P_0 based on uncertainties on model parameters.
+    state_sigmas have length n_dim and should correspond to uncertainties on v and/or W and W_dot.
+    v_sigma, W_sigma, W_dot_sigma should have units of v, W, W_dot (mm/yr and mm, typically).
+
+    
     """
+    n_param = len(state_sigmas)
+    P_0     = np.eye(n_param * n_patch)
+    
+    for i in range(n_patch):
+        for j in range(n_param):
+            P_0[i + j*n_patch, i + j*n_patch] *= state_sigmas[j]
 
-    # Form base matrices
-    I     = np.eye(n_patch)
-    zeros = np.zeros((n_patch, n_patch))
-
-    # Form rows
-    v     = np.hstack((v_sigma * I,  zeros,                 zeros))
-    W     = np.hstack((zeros,        W_sigma * I,           zeros))
-    W_dot = np.hstack((zeros,        zeros,       W_dot_sigma * I))
-
-    P_0     = np.vstack((v, W, W_dot))
+    # # Form base matrices
+    # I     = np.eye(n_patch)
+    # zeros = np.zeros((n_patch, n_patch))
+    # # Form rows
+    # v     = np.hstack((v_sigma * I,  zeros,                 zeros))
+    # W     = np.hstack((zeros,        W_sigma * I,           zeros))
+    # W_dot = np.hstack((zeros,        zeros,       W_dot_sigma * I))
+    # P_0     = np.vstack((v, W, W_dot))
 
     return P_0
 
 
-def make_process_covariance_matrix(n_patch, dt, omega):
+def make_process_covariance_matrix(n_patch, dt, omega, steady_slip=True):
     """
     Form process covariance matrix Q from number of fault elements n_patch, time-step dt, and temporal smoothing parameter omega.
     """
 
     # Form base matrices
     I     = np.eye(n_patch)
-    zeros = np.zeros((n_patch, n_patch))
+    # zeros = np.zeros((n_patch, n_patch))
 
-    # Form rows 
-    v     = np.hstack((zeros,                      zeros,                      zeros))
-    W     = np.hstack((zeros, (omega**2) * (dt**3)/3 * I, (omega**2) * (dt**2)/2 * I))
-    W_dot = np.hstack((zeros, (omega**2) * (dt**2)/2 * I,        (omega**2) * dt * I))
+    # # Form rows 
+    # v     = np.hstack((zeros,                      zeros,                      zeros))
+    # W     = np.hstack((zeros, (omega**2) * (dt**3)/3 * I, (omega**2) * (dt**2)/2 * I))
+    # W_dot = np.hstack((zeros, (omega**2) * (dt**2)/2 * I,        (omega**2) * dt * I))
+    # Q     = np.vstack((v, W, W_dot))
 
-    Q     = np.vstack((v, W, W_dot))
-   
+    # Form W/W_dot submatrix
+    W     = np.hstack(((omega**2) * (dt**3)/3 * I, (omega**2) * (dt**2)/2 * I))
+    W_dot = np.hstack(((omega**2) * (dt**2)/2 * I,        (omega**2) * dt * I))
+    Q_sub     = np.vstack((W, W_dot))
+
+    # Form complete Q matrix
+    if steady_slip:
+        Q = np.zeros((3*n_patch, 3*n_patch))
+        Q[-2*n_patch:, -2*n_patch:] = Q_sub
+    
+    else:
+        Q = Q_sub
+        
     return Q
 
 
-def make_data_covariance_matrix(C, n_patch, sigma, kappa):
+def make_data_covariance_matrix(C, n_patch, sigma, kappa, steady_slip=False):
     """
     Form data covariance matrix R from observation covariance matrix C, data covariance weight sigma, and spatial smoothing weight kappa.
     """
 
+    if steady_slip:
+        n_dim = 3 * n_patch
+    else:
+        n_dim = 2 * n_patch
+
+    n_data = len(C)
+
     # Form base matrices
     I       = np.eye(n_patch)
-    zeros_I = np.zeros_like(I)
-    zeros_CI = np.zeros((C.shape[0], n_patch))
-    zeros_IC = np.zeros((n_patch, C.shape[1]))
 
-    # Form rows
-    d     = np.hstack((sigma**2 * C,     zeros_CI,     zeros_CI,     zeros_CI))
-    v     = np.hstack((    zeros_IC, kappa**2 * I,      zeros_I,      zeros_I))
-    W     = np.hstack((    zeros_IC,      zeros_I, kappa**2 * I,      zeros_I))
-    W_dot = np.hstack((    zeros_IC,      zeros_I,      zeros_I, kappa**2 * I))
+    # Form R matrix
+    R = np.eye((n_data + n_dim))
+    R[:n_data, :n_data]  = sigma**2 * C
+    R[n_data:, n_data:] *= kappa**2
 
-    Q     = np.vstack((d, v, W, W_dot))
-   
-    return Q
+    # zeros_I = np.zeros_like(I)
+    # zeros_CI = np.zeros((C.shape[0], n_patch))
+    # zeros_IC = np.zeros((n_patch, C.shape[1]))
+    # # Form rows
+    # d     = np.hstack((sigma**2 * C,     zeros_CI,     zeros_CI,     zeros_CI))
+    # v     = np.hstack((    zeros_IC, kappa**2 * I,      zeros_I,      zeros_I))
+    # W     = np.hstack((    zeros_IC,      zeros_I, kappa**2 * I,      zeros_I))
+    # W_dot = np.hstack((    zeros_IC,      zeros_I,      zeros_I, kappa**2 * I))
+    # R     = np.vstack((d, v, W, W_dot))
+    return R
 
 
 def exponential_covariance(h, a, b, file_name='', show=False, units='km'):
@@ -2148,7 +2335,7 @@ class KalmanFilterResults:
     rms (n_obs,)                   - RMS error after analysis at each time step
     """
 
-    def __init__(self, model, resid, rms, x_f=[], x_a=[], P_f=[], P_a=[], x_s=[], P_s=[],  backward_smoothing=False):
+    def __init__(self, model, resid, rms, x_f=[], x_a=[], P_f=[], P_a=[], x_s=[], P_s=[], backward_smoothing=False):
         """
         Set attributes.
         """

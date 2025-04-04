@@ -11,13 +11,18 @@ import cmcrameri.cm as cmc
 
 # -------------------------- Required parameters --------------------------
 # Run mode(s)
-mode = ['analyze'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
+mode = ['NIF', 'analyze'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
+# mode = ['analyze'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
 
 # Files and directories
-mesh_file           = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/Mesh/Geometry/mesh_points_simple.txt'
-triangle_file       = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/Mesh/Geometry/mesh_connectivity_simple.txt'
-downsampled_dir     = f'/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/low_resolution/downsampled_data'
-out_dir             = f'/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/low_resolution'
+# mesh_file           = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/Mesh/Geometry/mesh_points_simple.txt'
+# triangle_file       = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/Mesh/Geometry/mesh_connectivity_simple.txt'
+# downsampled_dir     = f'/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/low_resolution/downsampled_data'
+# out_dir             = f'/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/low_resolution'
+mesh_file           = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/Mesh/Geometry/mesh_points.txt'
+triangle_file       = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/Mesh/Geometry/mesh_connectivity.txt'
+downsampled_dir     = f'/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/slip_only/downsampled_data'
+out_dir             = f'/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/slip_only'
 data_dir            = '/Users/evavra/Projects/SSAF/Data/InSAR/Sentinel_1/timeseries/decomposed/filt'
 file_format         = 'u_para_*_filt_10km.grd'
 
@@ -55,9 +60,7 @@ m0                  = [0.9, 1.5, 5]
 c_max               = 2
 sv_max              = 2
 
-# Geographic parameters
-# EPSG        = '32611' 
-# data_region = [-116.4, -115.7, 33.25, 34.0]
+# Geographic parameter
 ref_point   = [-116, 33.5]
 avg_strike  = 315.8
 trace_inc   = 0.01
@@ -69,8 +72,8 @@ disp_components = [1]       # displacement components to use [0 for fault-perpen
 slip_components = [0]       # slip components to use [0 for strike-slip, 1 for dip-slip, 2 for opening]
 
 # Resolution based resampling
-resolution_threshold = 2.3e-1 # cutoff value for resolution matrix (lower values = more points)
-# resolution_threshold = 1.0 # cutoff value for resolution matrix (lower values = more points)
+# resolution_threshold = 2.3e-1 # cutoff value for resolution matrix (lower values = more points)
+resolution_threshold = 1.0 # cutoff value for resolution matrix (lower values = more points)
 width_min            = 0.1 # Min. allowed cell size (km)
 width_max            = 10  # Max. allowed cell size (km)
 max_intersect_width  = 100 # Max. allowed size for fault-intersecting cells (km)
@@ -80,20 +83,21 @@ smoothing_samp       = False
 edge_slip_samp       = False
 
 # NIF parameters
-omega           = 1e2   # temporal smoothing hyperparameter
+omega           = 1e3   # temporal smoothing hyperparameter
 sigma           = 1e1   # data covariance scaling hyperparameter (Note: for single dataset, and single kappa value for steady-state velocity, transient slip, and transient velocity, sigma becomes reduntant)
 # kappa           = 1e2   # spatial smoothing hyperparameter
-kappa           = 2e1   # spatial smoothing hyperparameter
+kappa           = 1e0   # spatial smoothing hyperparameter
 mu              = kappa # spatial smoothing hyperparameter
 eta             = kappa # zero-edge-slip hyperparameter
-
+  
 # Uncertainties and limits
-constrain       = False
-v_sigma         = 1e-9    # initial uncertainty on interseimic slip rate (mm/yr) 
+steady_slip     = False    # Include constant slip rate in state vector
+constrain       = True     # Perform nonlinear solve for constrained state vector
+v_sigma         = 1e-9     # initial uncertainty on interseimic slip rate (mm/yr) 
 W_sigma         = 10       # initial uncertainty on transient slip (mm) 
 W_dot_sigma     = 10       # initial uncertainty on transient slip rate (mm/yr) \
 
-v_lim           = (0, 3)  # min./max. bounds on steady slip rate values (mm/yr)
+v_lim           = (0, 0.1)  # min./max. bounds on steady slip rate values (mm/yr)
 W_lim           = (0, 100) # min./max. bounds on transient slip values (mm)
 W_dot_lim       = (0, 100) # min./max. bounds on transient rate slip values (mm/yr)
 
