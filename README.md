@@ -1,5 +1,12 @@
 ## pyffit: Python Finite Fault Inversion Tools
 
+## New: inversion with GPS data (this is in an early testing phase. Please post any problem you encounter in the discussion panel!!!)
+1. Format of your GPS data: station, lon, lat, ux, uy, (uz), std_x, std_y, (std_z). If you have z displacements, set the data_type to 3d; otherwise, set to 2d. Displacement and standard deviation should be in m. z is downward positive.
+1. Go to examples/gps_setup_test.py, and specify your data and output directory, weights, and other parameters you would like to tweak.
+2. Go to eamples/mcmc_gps_test.py, set the path to the code directory, and run the code.
+
+
+
 
 ## What to expect next
 1. Elliptical deformation: currently the code only generates box-car deformation on a fault patch, which is probably not the most realistic way. In the future, the code will be updated so that the slips will taper out in an elliptical pattern away from the center.
@@ -70,11 +77,5 @@ To do the iterative sampling, assuming you have the results of initial sampling,
 4. Run R-based sampling
 5. Run mcmc_BF.py
 6. Repeat steps 1-3 until you get a satisfying results.
-
-
-## Run with GPS data (this is in an early testing phase. Please post any problem you encounter in the discussion panel!!!)
-1. Format of your GPS data: station, lon, lat, ux, uy, (uz), std_x, std_y, (std_z). If you have z displacements, set the data_type to 3d; otherwise, set to 2d. Displacement and standard deviation should be in m. z is downward positive.
-1. Go to examples/gps_setup_test.py, and specify your data and output directory, weights, and other parameters you would like to play with
-2. Go to eamples/mcmc_gps_test.py, set the path to the code directory, and run the code.
 
 
