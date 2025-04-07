@@ -319,7 +319,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
         ax.plot(dataset.date, s_model[:, i], c=c[i], alpha=0.3, zorder=int(abs(cval[i])))
 
     # ax.legend()
-    plt.colorbar(sm, label='Depth (km)')
+    plt.colorbar(sm, ax=plt.gca(), label='Depth (km)')
     plt.savefig(f'{result_dir}/Evolution_slip_depth.png', dpi=300)
     plt.close()
 
@@ -429,6 +429,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
             
             if use_datetime:
                 date = datasets[dataset_name].date[k].dt.strftime('%Y-%m-%d')
+                print(date)
             else:
                 date = datasets[dataset_name].date[k]
 
@@ -455,7 +456,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
 
             if k == len(x_model):
                 print(np.mean(np.abs(d[k, :n_data])), np.std(np.abs(d[k, :n_data])))
-
+    
     # Parallel
     os.environ["OMP_NUM_THREADS"] = "1"
     start       = time.time()
@@ -1095,17 +1096,6 @@ def test_resolution():
     plt.savefig(f'{result_dir}/Resolution/fault_resolution_matrix.png', dpi=300)
 
     print(result_dir + '/Resolution')
-    return
-
-
-def fault_plot_wrapper(params):
-
-    data_panels, fault_panels, fault, figsize, title, markersize, orientation, fault_lim, vlim_slip, cmap_disp, vlim_disp, xlim, ylim, dpi, show, file_name = params
-    
-    pyffit.figures.plot_fault_panels(data_panels, fault_panels, fault.mesh, fault.triangles, figsize=figsize, title=title, markersize=markersize,
-                                        orientation=orientation, fault_lim=fault_lim, vlim_slip=vlim_slip, cmap_disp=cmap_disp, vlim_disp=vlim_disp, 
-                                        xlim=xlim, ylim=ylim, dpi=dpi, show=show, file_name=file_name) 
-    print(file_name)
     return
 
 
@@ -2352,6 +2342,16 @@ def plot_slip_history(x, y, c, vmin=0, vmax=10, tick_inc=5, cmap=cmc.lajolla_r, 
         plt.show()
     return
 
+
+def fault_plot_wrapper(params):
+
+    data_panels, fault_panels, fault, figsize, title, markersize, orientation, fault_lim, vlim_slip, cmap_disp, vlim_disp, xlim, ylim, dpi, show, file_name = params
+    
+    pyffit.figures.plot_fault_panels(data_panels, fault_panels, fault.mesh, fault.triangles, figsize=figsize, title=title, markersize=markersize,
+                                        orientation=orientation, fault_lim=fault_lim, vlim_slip=vlim_slip, cmap_disp=cmap_disp, vlim_disp=vlim_disp, 
+                                        xlim=xlim, ylim=ylim, dpi=dpi, show=show, file_name=file_name) 
+    print(file_name)
+    return
 
 # ------------------ Classes ------------------
 class KalmanFilterResults:
