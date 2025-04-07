@@ -443,7 +443,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
             data_panels = [
                         dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=d[k, :n_data],       label=dataset_name),
                         dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results['model'][k, :], label='Model'),
-                        dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results['resid'][k, :], label=f"Residuals ({np.abs(results['resid'][k, :]).mean():.2f}'+ r'$\pm$' + f'{np.abs(results['resid'][k, :]).std():.2f})"),
+                        dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results['resid'][k, :], label=f"Residuals ({np.abs(results['resid'][k, :]).mean():.2f}"+ r'$\pm$' + f"{np.abs(results['resid'][k, :]).std():.2f})"),
                         ]
             
             fault_panels = [
@@ -460,11 +460,14 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     os.environ["OMP_NUM_THREADS"] = "1"
     start       = time.time()
     n_processes = multiprocessing.cpu_count()
-    pool        = multiprocessing.Pool(processes=4)
+    pool        = multiprocessing.Pool(processes=n_processes - 1)
     results     = pool.map(fault_plot_wrapper, params)
     pool.close()
     pool.join()
-    
+    del pool
+    del results
+    gc.collect()
+
     # 3D fault
     for k in range(len(x_model)):
     
@@ -491,7 +494,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
                                                elev=17, 
                                                n_seg=10, 
                                                n_tick=6, alpha=1, title=f'{date}: Mean = {s_model[k, :].mean():.2f} | range = {s_model[k, :].min():.2f}-{s_model[k, :].max():.2f}',
-                                            show=False, figsize=(8, 5), cbar_kwargs=dict(location='right', pad=0.05, shrink=0.4))
+                                               show=False, figsize=(8, 5), cbar_kwargs=dict(location='right', pad=0.05, shrink=0.4))
         fig.tight_layout()
         fig.savefig(f'{result_dir}/Slip/slip_smoothing_{date}.png', dpi=100)
         plt.close()
@@ -506,7 +509,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
 
     end = time.time() - start
     print(f'Total plotting time: {end:.1f} s')
-
+    print(result_dir)
     return
 
 
@@ -1188,7 +1191,7 @@ def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigm
         x_model_forward = file['x_a'][()]
 
     # Form transition matrix T
-    T = make_transition_matrix(n_patch, -dt, steady_slip=steady_slip)
+    # T = make_transition_matrix(n_patch, -dt, steady_slip=steady_slip)
     
     # Form process covariance matrix Q
     # Q = make_process_covariance_matrix(n_patch, -dt, omega)
@@ -1201,7 +1204,7 @@ def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigm
 
     # Clear memory before proceding
     # del results_forward
-    # gc.collect()
+    gc.collect()
 
     # Perform backward smoothing
     # results_smoothing = kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, constrain=constrain, state_lim=state_lim, cost_function=cost_function, backward_smoothing=True)
@@ -1209,7 +1212,7 @@ def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigm
     model, resid, rms, x_s, P_s = backward_smoothing(f'{result_dir}/results_forward.h5', d, dt, G, L, T, steady_slip=steady_slip, constrain=constrain, state_lim=state_lim, cost_function=cost_function)
     write_kalman_filter_results(model, resid, rms, x_s=x_s, P_s=P_s, backward_smoothing=True, file_name=f'{result_dir}/results_smoothing.h5',)
     x_model_smoothing = x_s
-    
+    gc.collect()
     # del results_smoothing
     # gc.collect()
 
@@ -1243,6 +1246,8 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], steady_sli
 
     n_obs   = d.shape[0]
     n_data  = d.shape[1] - n_dim
+    slip_start = steady_slip * n_patch  # Get start of transient slip
+    
     x_f     = np.empty((n_obs, n_dim))        # forecasted states
     x_a     = np.empty((n_obs, n_dim))        # analyzed states
     P_f     = np.empty((n_obs, n_dim, n_dim)) # forecasted covariances
@@ -1316,6 +1321,7 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], steady_sli
         # Constrain state estimate 
         start_opt = time.time()
         print(f'State range: {x_a[k, :].min():.2f} - {x_a[k, :].max():.2f}')
+
         if len(state_lim) == n_dim:
 
             bounds_flag = False
@@ -1347,19 +1353,31 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], steady_sli
 
             # If at least one value falls outside of the supplied bounds, perform optimization
             if bounds_flag:
+
                 print('Constraining...')
                 # Define monotonic increase constraint (or decrease if in backward smoothing mode)
                 if k != 0:
                     if backward_smoothing:
                         # State at k should be less than at state k - 1
                         constraints = (
-                                        {'type': 'ineq', 'fun': lambda x: x_a[k - 1, n_patch:2*n_patch] - x[n_patch:2*n_patch]}, # W_k-1 - W_k >= 0
+                                        {'type': 'ineq', 'fun': lambda x: x_a[k - 1, slip_start:slip_start + n_patch] - x[slip_start:slip_start + n_patch]}, # W_k-1 - W_k >= 0
                                         )
                     else:
-                        # State at k should be greater than at state k - 1
-                        constraints = (
-                                        {'type': 'ineq', 'fun': lambda x: x[n_patch:2*n_patch] - x_a[k - 1, n_patch:2*n_patch]}, # W_k - W_k-1 >= 0
-                                        )
+                        # # State at k should be greater than at state k - 1
+                        # constraints = (
+                        #                 {'type': 'ineq', 'fun': lambda x: x[slip_start:slip_start + n_patch] - x_a[k - 1, slip_start:slip_start +n_patch]}, # W_k - W_k-1 >= 0
+                        #                 )
+
+
+                        # Supply element-wise constraints on transient slip
+                        constraints = []
+
+                        for j in range(slip_start, slip_start + n_patch):
+                            def monotonic(x):
+                                return x[j] - x_a[k - 1, j]
+
+                        constraints.append({'type': 'ineq', 'fun': lambda x: monotonic(x)}) # W[k, j] - W[k - 1, j]  >= 0
+
                 else:
                     # There is no reference state if at k = 0
                     constraints = ()
@@ -1369,6 +1387,7 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], steady_sli
                 #     # cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(P_a[k, :, :]**-1 * (x - x_a[k, :]), ord=2)
                 #     cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(x - x_a[k, :], ord=2)
                 # else:
+
                 cost_function = lambda x: np.linalg.norm(x - x_a[k, :], ord=2)
                 # cost_function = lambda x: np.linalg.norm(d[k, :] - H @ x, ord=2) + np.linalg.norm(x - x_a[k, :], ord=2)
 
@@ -1489,7 +1508,8 @@ def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, constrain
     else:
         n_patch = n_dim//2    
     n_data  = d.shape[1] - n_dim
-
+    slip_start = steady_slip * n_patch # Get start of transient slip
+    
     # Initialize
     x_s     = np.empty((n_obs, n_dim))        # analyzed states
     P_s     = np.empty((n_obs, n_dim, n_dim)) # analyzed covariances
@@ -1520,6 +1540,8 @@ def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, constrain
         print(f'State range: {x_s[k, :].min():.2f} - {x_s[k, :].max():.2f}')
         
         if len(state_lim) == n_dim:
+            
+            H = make_observation_matrix(G, L, t=dt*k, steady_slip=steady_slip)
 
             bounds_flag = False
             
@@ -1550,9 +1572,18 @@ def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, constrain
                 # Define monotonic increase constraint (or decrease if in backward smoothing mode)
                 if (k < n_obs - 1):
                     # State at k should be less than at state k - 1
-                    constraints = (
-                                    {'type': 'ineq', 'fun': lambda x: x_s[k + 1, n_patch:2*n_patch] - x[n_patch:2*n_patch]}, # W_k+1 - W_k >= 0
-                                    )
+                    # constraints = (
+                    #                 {'type': 'ineq', 'fun': lambda x: x_s[k + 1, n_patch:2*n_patch] - x[n_patch:2*n_patch]}, # W_k+1 - W_k >= 0
+                    #                 )
+                    
+                    # Supply element-wise constraints on transient slip
+                    constraints = []
+
+                    for j in range(slip_start, slip_start + n_patch):
+                        def monotonic(x):
+                            return x_s[k + 1, j] - x[j]
+
+                    constraints.append({'type': 'ineq', 'fun': lambda x: monotonic(x)}) # W[k+1, j] - W[k, j] >= 0
 
                 else:
                     # There is no reference state if at k = n_obs - 1
@@ -1968,7 +1999,7 @@ def make_process_covariance_matrix(n_patch, dt, omega, steady_slip=True):
     # Form W/W_dot submatrix
     W     = np.hstack(((omega**2) * (dt**3)/3 * I, (omega**2) * (dt**2)/2 * I))
     W_dot = np.hstack(((omega**2) * (dt**2)/2 * I,        (omega**2) * dt * I))
-    Q_sub     = np.vstack((W, W_dot))
+    Q_sub = np.vstack((W, W_dot))
 
     # Form complete Q matrix
     if steady_slip:
