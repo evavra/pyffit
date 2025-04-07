@@ -436,7 +436,7 @@ def plot_fault_3d(mesh, triangles, c=[], fig_ax=[], edges=False, cmap_name='viri
         c     = cmap(cval)
 
         # Add colorbar
-        cbar  = fig.colorbar(sm, label=cbar_label, **cbar_kwargs,)
+        cbar  = fig.colorbar(sm, ax=plt.gca(), label=cbar_label, **cbar_kwargs,)
         cbar.set_ticks(ticks)
 
         for tri, c0 in zip(triangles, c):
