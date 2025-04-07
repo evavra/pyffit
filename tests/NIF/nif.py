@@ -180,13 +180,10 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     d         = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{samp_file}.pkl')
 
     # Load results
-    # results_forward = read_kalman_filter_results(f'{run_dir}/results_forward.h5')
-    # x_model_forward = results_forward.x_a
     results_forward = h5py.File(f'{run_dir}/results_forward.h5', 'r')
     x_model_forward = results_forward['x_a']
 
-    # results_smoothing = read_kalman_filter_results(f'{run_dir}/results_smoothing.h5')
-    # x_model = results_smoothing.x_s
+
     results_smoothing = h5py.File(f'{run_dir}/results_smoothing.h5', 'r')
     x_model           = results_smoothing['x_s']
 
@@ -237,7 +234,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     # -------------------- Plot history --------------------
     dpi    = 300
     hlines = [datetime.datetime(2017, 9, 8, 0, 0, 0), datetime.datetime(2019, 7, 5, 0, 0, 0)]
- 
+
  
     vmin   = 0
     vmax   = 5
@@ -262,15 +259,12 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     file_name = f'{result_dir}/History_slip.png'
     plot_slip_history(x_rng, dataset['date'], np.mean(slip_history, axis=1), cmap=cmap_slip, vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
 
-
     vmin   = 0
     vmax   = 40
     title  = 'Surface slip'
     label  = 'Slip (mm)'
     file_name = f'{result_dir}/History_surface_slip.png'
     plot_slip_history(x_rng, dataset['date'], slip_history[:, -1, :], cmap=cmap_slip, vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
-
-
     
     # -------------------- Slip s --------------------
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -291,7 +285,6 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     # ax.legend()
     plt.savefig(f'{result_dir}/Evolution_slip_2.png', dpi=300)
     plt.close()
-
 
     # -------------------- Slip s by depth --------------------
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -320,7 +313,6 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     plt.colorbar(sm, ax=plt.gca(), label='Depth (km)')
     plt.savefig(f'{result_dir}/Evolution_slip_depth.png', dpi=300)
     plt.close()
-
 
     # -------------------- Residuals --------------------
     fig, ax = plt.subplots(figsize=(6, 4))
@@ -352,7 +344,6 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     ax.legend()
     plt.savefig(f'{result_dir}/Evolution_rms_diff.png', dpi=300)
     plt.close()
-
 
     # -------------------- Slip rate v --------------------
     if steady_slip:
@@ -414,8 +405,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     # plt.close()
     
     # Plot fault and model fit
-    params = []
-
+    params      = []
     date        = datasets[dataset_name].date[-1]
     title       = f'Date: {date}'
     orientation = 'horizontal'
@@ -433,9 +423,6 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
             slip_resid = s[k, :] - s_true[k, :]
 
             title       = f'[{run}] Date: {date}'
-            orientation = 'horizontal'
-            fault_lim   = 'mesh'
-            show        = False
             file_name   = f'{result_dir}/Results/{run}_{date}.png'
 
             data_panels = [
@@ -459,7 +446,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     start       = time.time()
     n_processes = multiprocessing.cpu_count()
     pool        = multiprocessing.Pool(processes=n_processes - 1)
-    results     = pool.map(fault_plot_wrapper, params)
+    results     = pool.map(fault_panel_wrapper, params)
     pool.close()
     pool.join()
     del pool
@@ -467,8 +454,20 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     gc.collect()
 
     # 3D fault
+    params      = []
+    edges       = True,     
+    cbar_label  = 'Dextral slip (mm)'
+    labelpad    = 10
+    azim        = 235
+    elev        = 17 
+    n_seg       = 10 
+    n_tick      = 6
+    alpha       = 1
+    show        = False
+    figsize     = (8, 5)
+    cbar_kwargs = dict(location='right', pad=0.05, shrink=0.4)
+
     for k in range(len(x_model)):
-    
         # # Plot forward modeled slip 
         # date = datasets[dataset_name].date[k]
 
@@ -479,23 +478,30 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
         # plt.close()
 
         # Plot smoothed modeled slip 
-        # date = datasets[dataset_name].date[-(k + 1)]
-        date = datasets[dataset_name].date[k].dt.strftime('%Y-%m-%d')
+        date      = datasets[dataset_name].date[k].dt.strftime('%Y-%m-%d').item()
+        title     = f'{date}: Mean = {s_model[k, :].mean():.2f} | range = {s_model[k, :].min():.2f}-{s_model[k, :].max():.2f}',
+        file_name = f'{result_dir}/Slip/slip_smoothing_{date}.png'
+        c         = s_model[k, :]
+        params.append([fault.mesh, fault.triangles, s_model[k, :], edges, cmap_name, cbar_label, vlim_slip, labelpad, azim, elev, n_seg, n_tick, alpha, title, show, figsize, cbar_kwargs, file_name])
 
-        fig, ax = pyffit.figures.plot_fault_3d(fault.mesh, fault.triangles, c=s_model[k, :], 
-                                               edges=True, 
-                                               cmap_name=cmap_slip, 
-                                               cbar_label='Dextral slip (mm)', 
-                                               vlim_slip=vlim_slip, 
-                                               labelpad=10, 
-                                               azim=235, 
-                                               elev=17, 
-                                               n_seg=10, 
-                                               n_tick=6, alpha=1, title=f'{date}: Mean = {s_model[k, :].mean():.2f} | range = {s_model[k, :].min():.2f}-{s_model[k, :].max():.2f}',
-                                               show=False, figsize=(8, 5), cbar_kwargs=dict(location='right', pad=0.05, shrink=0.4))
-        fig.tight_layout()
-        fig.savefig(f'{result_dir}/Slip/slip_smoothing_{date}.png', dpi=100)
-        plt.close()
+
+        # fig, ax = pyffit.figures.plot_fault_3d(fault.mesh, fault.triangles, c=s_model[k, :], 
+        #                                        edges=True, 
+        #                                        cmap_name=cmap_slip, 
+        #                                        cbar_label='Dextral slip (mm)', 
+        #                                        vlim_slip=vlim_slip, 
+        #                                        labelpad=10, 
+        #                                        azim=235, 
+        #                                        elev=17, 
+        #                                        n_seg=10, 
+        #                                        n_tick=6, alpha=1, title=f'{date}: Mean = {s_model[k, :].mean():.2f} | range = {s_model[k, :].min():.2f}-{s_model[k, :].max():.2f}',
+        #                                        show=False, figsize=(8, 5), cbar_kwargs=dict(location='right', pad=0.05, shrink=0.4))
+        # fig.tight_layout()
+        # fig.savefig(f'{result_dir}/Slip/slip_smoothing_{date}.png', dpi=100)
+        # plt.close()
+
+
+
 
         # # Plot residuals
         # fig, ax = pyffit.figures.plot_fault_3d(fault.mesh, fault.triangles, c=s_model[k, :] - s_true[k, :], vlim_slip=[-20, 20], edges=True, cmap_name='coolwarm', cbar_label='Residual (mm)', 
@@ -503,6 +509,20 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
         #                                     show=False, figsize=(7, 5), cbar_kwargs=dict(location='right', pad=0.05, shrink=0.4))
         # fig.savefig(f'{result_dir}/residual_{date}', dpi=100)
         # plt.close()
+
+
+
+    # Parallel
+    os.environ["OMP_NUM_THREADS"] = "1"
+    start       = time.time()
+    n_processes = multiprocessing.cpu_count()
+    pool        = multiprocessing.Pool(processes=n_processes - 1)
+    results     = pool.map(fault_3d_wrapper, params)
+    pool.close()
+    pool.join()
+    del pool
+    del results
+    gc.collect()
 
 
     end = time.time() - start
@@ -2340,7 +2360,7 @@ def plot_slip_history(x, y, c, vmin=0, vmax=10, tick_inc=5, cmap=cmc.lajolla_r, 
     return
 
 
-def fault_plot_wrapper(params):
+def fault_panel_wrapper(params):
 
     data_panels, fault_panels, fault, figsize, title, markersize, orientation, fault_lim, vlim_slip, cmap_disp, vlim_disp, xlim, ylim, dpi, show, file_name = params
     
@@ -2349,6 +2369,32 @@ def fault_plot_wrapper(params):
                                         xlim=xlim, ylim=ylim, dpi=dpi, show=show, file_name=file_name) 
     print(file_name)
     return
+
+def fault_3d_wrapper(params):
+
+    mesh, triangles, c, edges, cmap_name, cbar_label, vlim_slip, labelpad, azim, elev, n_seg, n_tick, alpha, title, show, figsize, cbar_kwargs, file_name = params
+    
+    fig, ax = pyffit.figures.plot_fault_3d(mesh, triangles, c=c, 
+                                            edges=edges, 
+                                            cmap_name=cmap_name, 
+                                            cbar_label=cbar_label, 
+                                            vlim_slip=vlim_slip, 
+                                            labelpad=labelpad, 
+                                            azim=azim, 
+                                            elev=elev, 
+                                            n_seg=n_seg, 
+                                            n_tick=n_tick, 
+                                            alpha=alpha, 
+                                            title=title,
+                                            show=show, 
+                                            figsize=figsize, 
+                                            cbar_kwargs=cbar_kwargs)
+    fig.tight_layout()
+    fig.savefig(file_name, dpi=100)
+    plt.close()
+    print(file_name)
+    return
+
 
 # ------------------ Classes ------------------
 class KalmanFilterResults:
