@@ -103,7 +103,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
             smoothing_samp=False, edge_slip_samp=False,  omega=1e1, sigma=1e1, kappa=2e1, mu=2e1, 
             eta=2e1, steady_slip=False, constrain=False, v_sigma=1e-9, W_sigma=1,  W_dot_sigma=1, v_lim=(0,3), W_lim=(0,30), W_dot_lim=(0,50), 
             xlim=[-35.77475071,26.75029172], ylim=[-26.75029172, 55.08597388], vlim_slip=[0, 20], 
-            vlim_disp=[[-10,10], [-10,10], [-1,1]], cmap_disp=cmc.vik, figsize=(10, 10), dpi=75, markersize=40, 
+            vlim_disp=[[-10,10], [-10,10], [-1,1]], cmap_slip=cmc.lajolla, cmap_disp=cmc.vik, figsize=(10, 10), dpi=75, markersize=40, 
             param_file='params.py',
 
             # look_dir, asc_velo_model_file, des_velo_model_file, ykey='y', EPSG='32611', 
@@ -226,7 +226,6 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     slip_history = np.empty((s_model.shape[0], n_z, n_x))
 
     # Interpolate slip history to regurlar grid
-    print(x_center.shape, z_center.shape, s_model.shape)
     for k in range(len(s_model)):
         slip_history[k, :, :] = griddata((x_center, z_center), s_model[k, :], (x_grid, z_grid), method='cubic')
 
@@ -237,7 +236,6 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
 
     # -------------------- Plot history --------------------
     dpi    = 300
-    cmap   = cmc.lajolla_r
     hlines = [datetime.datetime(2017, 9, 8, 0, 0, 0), datetime.datetime(2019, 7, 5, 0, 0, 0)]
  
  
@@ -247,7 +245,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     label  = 'Slip rate (mm/yr)'
     file_name = f'{result_dir}/History_slip_rate.png'
 
-    plot_slip_history(x_rng, dataset['date'], np.mean(slip_rate_history, axis=1), vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
+    plot_slip_history(x_rng, dataset['date'], np.mean(slip_rate_history, axis=1), cmap=cmap_slip, vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
 
     vmin   = 0
     vmax   = 15
@@ -255,14 +253,14 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     label  = 'Slip rate (mm/yr)'
     file_name = f'{result_dir}/History_surface_slip_rate.png'
 
-    plot_slip_history(x_rng, dataset['date'], slip_rate_history[:, -1, :], vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
+    plot_slip_history(x_rng, dataset['date'], slip_rate_history[:, -1, :], cmap=cmap_slip, vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
 
     vmin   = 0
     vmax   = 10
     title  = 'Depth averaged slip'
     label  = 'Slip (mm)'
     file_name = f'{result_dir}/History_slip.png'
-    plot_slip_history(x_rng, dataset['date'], np.mean(slip_history, axis=1), vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
+    plot_slip_history(x_rng, dataset['date'], np.mean(slip_history, axis=1), cmap=cmap_slip, vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
 
 
     vmin   = 0
@@ -270,7 +268,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     title  = 'Surface slip'
     label  = 'Slip (mm)'
     file_name = f'{result_dir}/History_surface_slip.png'
-    plot_slip_history(x_rng, dataset['date'], slip_history[:, -1, :], vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
+    plot_slip_history(x_rng, dataset['date'], slip_history[:, -1, :], cmap=cmap_slip, vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
 
 
     
@@ -441,13 +439,13 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
             file_name   = f'{result_dir}/Results/{run}_{date}.png'
 
             data_panels = [
-                        dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=d[k, :n_data],       label=dataset_name),
+                        dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=d[k, :n_data],          label=dataset_name),
                         dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results['model'][k, :], label='Model'),
                         dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results['resid'][k, :], label=f"Residuals ({np.abs(results['resid'][k, :]).mean():.2f}"+ r'$\pm$' + f"{np.abs(results['resid'][k, :]).std():.2f})"),
                         ]
             
             fault_panels = [
-                        dict(slip=s[k, :], cmap='viridis', vlim=vlim_slip, title='Slip model', label='Slip (mm)'),
+                        dict(slip=s[k, :], cmap=cmap_slip, vlim=vlim_slip, title='Slip model', label='Slip (mm)'),
                         # dict(slip=slip_resid, cmap=cmc.vik,   vlim=[-1, 1], title=f'Residuals ({np.abs(slip_resid).mean():.2f}'+ r'$\pm$' + f'{np.abs(slip_resid).std():.2f})',  label='Residuals (mm)'),
                         ]
             
@@ -486,7 +484,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
 
         fig, ax = pyffit.figures.plot_fault_3d(fault.mesh, fault.triangles, c=s_model[k, :], 
                                                edges=True, 
-                                               cmap_name='viridis', 
+                                               cmap_name=cmap_slip, 
                                                cbar_label='Dextral slip (mm)', 
                                                vlim_slip=vlim_slip, 
                                                labelpad=10, 
@@ -523,7 +521,7 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
             smoothing_samp=False, edge_slip_samp=False, omega=1e1, sigma=1e1, kappa=2e1, mu=2e1, 
             eta=2e1, steady_slip=False, constrain=False, v_sigma=1e-9, W_sigma=1,  W_dot_sigma=1, v_lim=(0,3), W_lim=(0,30), W_dot_lim=(0,50), 
             xlim=[-35.77475071,26.75029172], ylim=[-26.75029172, 55.08597388], vlim_slip=[0, 20], 
-            vlim_disp=[[-10,10], [-10,10], [-1,1]], cmap_disp=cmc.vik, figsize=(10, 10), dpi=75, markersize=40, 
+            vlim_disp=[[-10,10], [-10,10], [-1,1]], cmap_slip=cmc.lajolla, cmap_disp=cmc.vik, figsize=(10, 10), dpi=75, markersize=40, 
             param_file='params.py'
             # look_dir, asc_velo_model_file, des_velo_model_file, ykey='y', EPSG='32611', 
             # data_region=[-116.4, -115.7, 33.25, 34.0], smoothing_inv=True, edge_slip_inv=False,

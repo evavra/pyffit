@@ -103,6 +103,7 @@ vlim_slip  = [0, 40]
 vlim_disp  = [[-20, 20],
               [-20, 20],
               [-20, 20]] 
+cmap_slip  = cmc.la_jolla
 cmap_disp  = cmc.vik
 figsize    = (10, 7)
 dpi        = 75

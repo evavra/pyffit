@@ -21,8 +21,8 @@ mode = ['NIF', 'analyze'] # 'NIF' to run inversion, 'analyze' to make figures, o
 # out_dir             = f'/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/low_resolution'
 mesh_file           = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/Mesh/Geometry/mesh_points.txt'
 triangle_file       = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/Mesh/Geometry/mesh_connectivity.txt'
-downsampled_dir     = f'/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/slip_only/downsampled_data'
-out_dir             = f'/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/slip_only'
+downsampled_dir     = f'/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/full_constraint/downsampled_data'
+out_dir             = f'/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/full_constraint'
 data_dir            = '/Users/evavra/Projects/SSAF/Data/InSAR/Sentinel_1/timeseries/decomposed/filt'
 file_format         = 'u_para_*_filt_10km.grd'
 
@@ -83,10 +83,10 @@ smoothing_samp       = False
 edge_slip_samp       = False
 
 # NIF parameters
-omega           = 1e3   # temporal smoothing hyperparameter
+omega           = 2e3   # temporal smoothing hyperparameter
+kappa           = 3e0   # spatial smoothing hyperparameter
 sigma           = 1e1   # data covariance scaling hyperparameter (Note: for single dataset, and single kappa value for steady-state velocity, transient slip, and transient velocity, sigma becomes reduntant)
 # kappa           = 1e2   # spatial smoothing hyperparameter
-kappa           = 1e0   # spatial smoothing hyperparameter
 mu              = kappa # spatial smoothing hyperparameter
 eta             = kappa # zero-edge-slip hyperparameter
   
@@ -109,6 +109,7 @@ vlim_disp  = [[-20, 20],
               [-20, 20],
               [-20, 20]] 
 cmap_disp  = cmc.vik
+cmap_slip  = cmc.lajolla_r
 figsize    = (10, 7)
 dpi        = 75
 markersize = 40
