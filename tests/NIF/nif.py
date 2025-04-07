@@ -428,8 +428,7 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
         for k in range(len(x_model)):
             
             if use_datetime:
-                date = datasets[dataset_name].date[k].dt.strftime('%Y-%m-%d')[()]
-                print(date)
+                date = datasets[dataset_name].date[k].dt.strftime('%Y-%m-%d').item()
             else:
                 date = datasets[dataset_name].date[k]
 
