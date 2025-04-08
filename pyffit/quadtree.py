@@ -1,4 +1,5 @@
 import os
+import h5py
 import multiprocessing
 import time
 import numpy as np
@@ -330,7 +331,7 @@ def get_min_fault_dist(trace, extent):
 
 
 # ------------------ Application methods ------------------
-def get_downsampled_time_series(datasets, inversion_inputs, fault, n_dim, dataset_name='data', file_name='downsampled_data.pkl'):
+def get_downsampled_time_series(datasets, inversion_inputs, fault, n_dim, dataset_name='data', file_name='downsampled_data.h5'):
     """
     Generate matrix containing downsampled time series data based off of an existing quadtree structure
     """
@@ -338,8 +339,11 @@ def get_downsampled_time_series(datasets, inversion_inputs, fault, n_dim, datase
     # Load downsampled time series matrix if already exists
     if os.path.exists(file_name):
         print('\n##### Loading time series #####')
-        with open(file_name, 'rb') as f:
-            d = pickle.load(f)
+        # with open(file_name, 'rb') as f:
+        #     d = pickle.load(f)
+
+        with h5py.File(file_name, 'r') as file:
+            d = file['d'][()]
 
     # Apply existing quadtree to time-series
     else:
@@ -375,8 +379,11 @@ def get_downsampled_time_series(datasets, inversion_inputs, fault, n_dim, datase
 
         print('\n' + f'Saving time series matrix d to {file_name}')
 
-        with open(file_name, 'wb') as f:
-            pickle.dump(d, f)
+        # with open(file_name, 'wb') as f:
+        #     pickle.dump(d, f)
+
+        with h5py.File(file_name, 'w') as file:
+            file.create_dataset('d', data=d)
 
         end = time.time() - start
         print(f'Data computation time: {end:.1f} s')

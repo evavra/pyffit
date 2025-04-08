@@ -2,6 +2,7 @@
 import os
 import gc
 import sys
+import glob
 import h5py
 import time
 import shutil
@@ -49,8 +50,11 @@ def main():
     if 'NIF' in mode:
         run_nif(**params)
         
-    if 'analyze' in mode:
-        analyze_nif(**params)
+    if 'analyze_model' in mode:
+        analyze_model(**params)
+
+    if 'analyze_disp' in mode:
+        analyze_disp(**params)
 
     end = time.time() - start
     print(f'Total run time: {end/60:.2f}')
@@ -93,7 +97,148 @@ def load_parameters(file_name):
 
 
 # ------------------ Drivers ------------------
-def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, data_dir, 
+def analyze_disp(mesh_file, triangle_file, data_dir, file_format, run_dir, samp_file, site_file):
+    """
+    Analyze network inversion filter results.
+    """
+    start = time.time()
+
+    result_dir = f'{run_dir}/Results'
+
+    # Get most recent parameter file from run directory
+
+    files = sorted(glob.glob(f'{run_dir}/Scripts/*/*param*'))
+    mode, params = load_parameters(files[-1])
+
+    slip_components = params['slip_components']
+    poisson_ratio=params['poisson_ratio'] 
+    shear_modulus = params['shear_modulus']
+    trace_inc = params['trace_inc']
+    mu = params['mu']
+    eta = params['eta']
+    steady_slip = params['steady_slip']
+    dataset_name = params['dataset_name']
+    ref_point = params['ref_point']
+    data_factor = params['data_factor']
+    xkey = params['xkey']
+    coord_type = params['coord_type']
+    date_index_range = params['date_index_range']
+    check_lon = params['check_lon']
+    reference_time_series = params['reference_time_series']
+    use_dates = params['use_dates']
+    use_datetime = params['use_datetime']
+    mask_file = params['mask_file']
+    model_file = params['model_file']
+    dataset_name = params['dataset_name']
+    downsampled_dir = params['downsampled_dir']
+    resolution_threshold = params['resolution_threshold']
+    width_min = params['width_min']
+    width_max = params['width_max']
+    max_intersect_width = params['max_intersect_width']
+    min_fault_dist = params['min_fault_dist']
+    max_iter = params['max_iter']
+    smoothing_samp = params['smoothing_samp']
+    edge_slip_samp = params['edge_slip_samp']
+    disp_components = params['disp_components']
+    dt = params['dt']
+
+    # -------------------------- Prepare original data --------------------------    
+    # Load fault model and regularization matrices
+    fault = pyffit.finite_fault.TriFault(mesh_file, triangle_file, slip_components=slip_components, 
+                                         poisson_ratio=poisson_ratio, shear_modulus=shear_modulus, 
+                                         verbose=False, trace_inc=trace_inc, mu=mu, eta=eta)
+    n_patch = len(fault.triangles)
+
+    if steady_slip:
+        n_dim   = 3 * n_patch
+    else:
+        n_dim   = 2 * n_patch
+
+    # Load data
+    dataset = pyffit.data.load_insar_dataset(data_dir, file_format, dataset_name, ref_point, data_factor=data_factor, xkey=xkey, 
+                                             coord_type=coord_type, date_index_range=date_index_range, 
+                                             check_lon=check_lon, reference_time_series=reference_time_series, 
+                                             incremental=False, use_dates=use_dates, use_datetime=use_datetime, 
+                                             mask_file=mask_file)
+    datasets = {dataset_name: dataset}
+    n_obs    = len(dataset.date)
+    x        = dataset.coords['x'].compute().data.flatten()
+    y        = dataset.coords['y'].compute().data.flatten()
+
+    # Load original slip model
+    if len(model_file) > 0:
+        try:
+            with h5py.File(model_file, 'r') as file:
+                slip_model = file['slip_model'][()]
+        except KeyError:
+            print('Error: speficied model_file could not be located')
+            sys.exit(1)
+    else:
+        slip_model = np.full([n_patch, 3, n_obs], np.nan)
+
+    # ------------------ Prepare inversion inputs ------------------
+    # Get dictionary of quadtree parameters
+    quadtree_params = dict(
+                            resolution_threshold=resolution_threshold,
+                            width_min=width_min,
+                            width_max=width_max,
+                            max_intersect_width=max_intersect_width,
+                            min_fault_dist=min_fault_dist,
+                            max_iter=max_iter, 
+                            poisson_ratio=poisson_ratio,
+                            smoothing=smoothing_samp,
+                            edge_slip=edge_slip_samp,
+                            disp_components=disp_components,
+                            slip_components=slip_components,
+                            run_dir=run_dir,
+                            )
+
+    # Prepare inversion inputs
+    inputs = pyffit.inversion.get_inversion_inputs(fault, datasets, quadtree_params, date=-1, run_dir=run_dir, verbose=False)
+    n_data = inputs[dataset_name].tree.x.size
+    dt    /= 365.25
+
+    # Prepare downsampled data
+    # print(samp_file)
+    # with open(samp_file, 'rb') as f:
+    #     d = pickle.load(f)
+    samp_file = f'cutoff={resolution_threshold:.1e}_wmin={width_min:.2f}_wmax={width_max:.2f}_max_int_w={max_intersect_width:.1f}_min_fdist={min_fault_dist:.2f}_max_it={max_iter:0f}'
+    d         = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{samp_file}.h5')
+
+
+    # Load sites to extract time series
+    def load_site_table(site_file):
+
+        sites = pd.read_csv(site_file, header=0, delim_whitespace=True)
+        return sites
+
+
+    sites = load_site_table(site_file)
+    print(sites)
+
+
+
+    # Load
+    # # Load results
+    # results_forward = h5py.File(f'{run_dir}/results_forward.h5', 'r')
+    # x_model_forward = results_forward['x_a']
+
+    # results_smoothing = h5py.File(f'{run_dir}/results_smoothing.h5', 'r')
+    # x_model           = results_smoothing['x_s']
+    
+    # # Compute integrated slip
+    # if steady_slip:
+    #     s_model_forward = integrate_slip(results_forward['x_a'], dt)
+    #     s_model         = integrate_slip(results_smoothing['x_s'], dt)
+    # else:
+    #     s_model_forward = x_model_forward[:, :n_patch]
+    #     s_model = x_model[:, :n_patch]
+
+    # s_true = slip_model[:, 0, :].T
+    return
+
+
+def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, data_dir, 
             date_index_range=[-22, -14], xkey='x', coord_type='xy', dataset_name='data',
             check_lon=False, reference_time_series=True, use_dates=False, use_datetime=False, dt=1, data_factor=1,
             model_file='', mask_file='', estimate_covariance=False, mask_dists=[3], n_samp=2*10**7, r_inc=0.2, r_max=80, mask_dir='.', cov_dir='.', 
@@ -140,8 +285,6 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
     x        = dataset.coords['x'].compute().data.flatten()
     y        = dataset.coords['y'].compute().data.flatten()
 
-    # dt = convert_timedelta(dataset.date[1] - dataset.date[0], unit='D')
-
     # Load original slip model
     if len(model_file) > 0:
         try:
@@ -177,16 +320,15 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
 
     # Prepare downsampled ata
     samp_file = f'cutoff={resolution_threshold:.1e}_wmin={width_min:.2f}_wmax={width_max:.2f}_max_int_w={max_intersect_width:.1f}_min_fdist={min_fault_dist:.2f}_max_it={max_iter:0f}'
-    d         = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{samp_file}.pkl')
+    d         = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{samp_file}.h5')
 
     # Load results
     results_forward = h5py.File(f'{run_dir}/results_forward.h5', 'r')
     x_model_forward = results_forward['x_a']
 
-
     results_smoothing = h5py.File(f'{run_dir}/results_smoothing.h5', 'r')
     x_model           = results_smoothing['x_s']
-
+    
     # Compute integrated slip
     if steady_slip:
         s_model_forward = integrate_slip(results_forward['x_a'], dt)
@@ -645,7 +787,7 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
 
     # Prepare data
     samp_file = f'cutoff={resolution_threshold:.1e}_wmin={width_min:.2f}_wmax={width_max:.2f}_max_int_w={max_intersect_width:.1f}_min_fdist={min_fault_dist:.2f}_max_it={max_iter:0f}'
-    d         = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{samp_file}.pkl')
+    d         = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{samp_file}.h5')
 
     # Get Greens Functions
     G = -fault.greens_functions(inputs[dataset_name].tree.x, inputs[dataset_name].tree.y, disp_components=disp_components, slip_components=slip_components, rotation=avg_strike, squeeze=True)
@@ -1503,8 +1645,8 @@ def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, constrain
 
     start_total = time.time()
     file = h5py.File(f'{result_file}', 'r')
-    x_f = file['x_f'][()]
-    x_a = file['x_a'][()]
+    x_f  = file['x_f'][()]
+    x_a  = file['x_a'][()]
 
     # ---------- Kalman Filter ---------- 
     # Get lengths
@@ -1539,7 +1681,7 @@ def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, constrain
         S[k, :, :] = file['P_a'][k, :, :] @ T.T @ P_f_inv
 
         # Get smoothed states and covariances
-        x_s[k, :]    =         x_a[k, :] + S[k, :, :] @ (x_s[k + 1, :]               - x_f[k + 1, :])
+        x_s[k, :]    =         x_a[k, :] + S[k, :, :] @ (x_s[k + 1, :]    - x_f[k + 1, :])
         P_s[k, :, :] = file['P_a'][k, :] + S[k, :, :] @ (P_s[k + 1, :, :] - file['P_f'][k + 1, :, :]) @ S[k, :, :].T
         
          # Constrain state estimate 
