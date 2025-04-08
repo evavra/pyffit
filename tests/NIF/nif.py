@@ -479,10 +479,10 @@ def analyze_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir,
 
         # Plot smoothed modeled slip 
         date      = datasets[dataset_name].date[k].dt.strftime('%Y-%m-%d').item()
-        title     = f'{date}: Mean = {s_model[k, :].mean():.2f} | range = {s_model[k, :].min():.2f}-{s_model[k, :].max():.2f}',
+        title     = f'{date}: Mean = {s_model[k, :].mean():.2f} | range = {s_model[k, :].min():.2f}-{s_model[k, :].max():.2f}'
         file_name = f'{result_dir}/Slip/slip_smoothing_{date}.png'
         c         = s_model[k, :]
-        params.append([fault.mesh, fault.triangles, s_model[k, :], edges, cmap_name, cbar_label, vlim_slip, labelpad, azim, elev, n_seg, n_tick, alpha, title, show, figsize, cbar_kwargs, file_name])
+        params.append([fault.mesh, fault.triangles, s_model[k, :], edges, cmap_slip, cbar_label, vlim_slip, labelpad, azim, elev, n_seg, n_tick, alpha, title, show, figsize, cbar_kwargs, file_name])
 
 
         # fig, ax = pyffit.figures.plot_fault_3d(fault.mesh, fault.triangles, c=s_model[k, :], 
