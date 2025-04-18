@@ -628,12 +628,18 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
 
     run_dir    = f'{out_dir}/omega_{omega:.1e}__kappa_{kappa:.1e}__sigma_{sigma:.1e}'
     result_dir = f'{run_dir}/Results'
+ # Get directory for downsampled data
+    pyffit.utilities.check_dir_tree(downsampled_dir + '/' + dataset_name)
+        
+    # Get parameter values to check
+    quadtree_dir = get_downsampled_data_directory(downsampled_dir + '/' + dataset_name, param_file)
 
     # -------------------------- Prepare original data --------------------------    
     # Load fault model and regularization matrices
     fault = pyffit.finite_fault.TriFault(mesh_file, triangle_file, slip_components=slip_components, 
                                          poisson_ratio=poisson_ratio, shear_modulus=shear_modulus, 
-                                         verbose=False, trace_inc=trace_inc, mu=mu, eta=eta)
+                                         verbose=False, trace_inc=trace_inc, mu=mu, eta=eta,
+                                         avg_strike=avg_strike, ref_point=ref_point)
     n_patch = len(fault.triangles)
 
     if steady_slip:
@@ -646,7 +652,7 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
                                              coord_type=coord_type, date_index_range=date_index_range, 
                                              check_lon=check_lon, reference_time_series=reference_time_series, 
                                              incremental=False, use_dates=use_dates, use_datetime=use_datetime, 
-                                             mask_file=mask_file)
+                                             mask_file=mask_file, remove_mean=False)
     datasets = {dataset_name: dataset}
     n_obs    = len(dataset.date)
     x        = dataset.coords['x'].compute().data.flatten()
@@ -677,17 +683,23 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
                             edge_slip=edge_slip_samp,
                             disp_components=disp_components,
                             slip_components=slip_components,
-                            run_dir=run_dir,
+                            quadtree_dir=quadtree_dir,
                             )
 
     # Prepare inversion inputs
-    inputs = pyffit.inversion.get_inversion_inputs(fault, datasets, quadtree_params, date=-1, run_dir=run_dir, verbose=False)
+    inputs = pyffit.inversion.get_inversion_inputs(fault, datasets, quadtree_params, date=-1, quadtree_dir=quadtree_dir, verbose=False)
+    tree   = inputs[dataset_name].tree
     n_data = inputs[dataset_name].tree.x.size
     dt    /= 365.25
 
-    # Prepare downsampled ata
+    # -------------------------- Prepare NIF objects --------------------------
+    print(f'Number of fault elements: {n_patch}')
+    print(f'Number of data points:    {n_data}')
+
+    # Prepare data
     samp_file = f'cutoff={resolution_threshold:.1e}_wmin={width_min:.2f}_wmax={width_max:.2f}_max_int_w={max_intersect_width:.1f}_min_fdist={min_fault_dist:.2f}_max_it={max_iter:0f}'
-    d         = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{samp_file}.h5')
+    d, std = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{dataset_name}/{samp_file}.h5')
+
 
     # Load results
     results_forward = h5py.File(f'{run_dir}/results_forward.h5', 'r')
@@ -1151,7 +1163,8 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     # Load fault model and regularization matrices
     fault = pyffit.finite_fault.TriFault(mesh_file, triangle_file, slip_components=slip_components, 
                                          poisson_ratio=poisson_ratio, shear_modulus=shear_modulus, 
-                                         verbose=False, trace_inc=trace_inc, mu=mu, eta=eta)
+                                         verbose=False, trace_inc=trace_inc, mu=mu, eta=eta,
+                                         avg_strike=avg_strike, ref_point=ref_point)
     n_patch = len(fault.triangles)
 
     if steady_slip:
