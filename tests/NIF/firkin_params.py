@@ -18,8 +18,8 @@ mesh_file           = '/raid/class239/ellis/SSAF/NIF/mesh/mesh_points_updated.tx
 triangle_file       = '/raid/class239/ellis/SSAF/NIF/mesh/mesh_connectivity_updated.txt'
 downsampled_dir     = '/raid/class239/ellis/SSAF/NIF/data/updated_mesh/downsampled_data'
 out_dir             = '/raid/class239/ellis/SSAF/NIF/data/updated_mesh'
-data_dir            = '/raid/class239/ellis/SSAF/timeseries/decomposed/filt'
-file_format         = 'u_para_*_filt_10km.grd'
+data_dir            = '/raid/class239/ellis/SSAF/timeseries/decomposed/filt/corrections'
+file_format         = 'u_para_*_filt_10km_deramped.grd'
 
 # -------------------------- 'Optional' parameters --------------------------
 # The following parameters have default values in nif.py, but will almost certainly want to be chosen for each
