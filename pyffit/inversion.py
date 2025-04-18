@@ -104,12 +104,10 @@ class InversionDataset:
         """
         self.slip_model = slip_model
         start = time.time()
-        self.model      = self.greens_functions.dot(slip_model)
+        self.model = self.greens_functions.dot(slip_model)
         end = time.time() - start
-
-        self.resids     = self.tree.data - self.model     
-        self.rms        = np.sqrt(np.sum(self.resids**2)/len(self.resids))
-
+        self.resids = self.tree.data - self.model     
+        self.rms = np.sqrt(np.sum(self.resids**2)/len(self.resids))
         self.model_time = end
         
         if self.verbose:
@@ -118,7 +116,7 @@ class InversionDataset:
 
 # -------------------------- Main methods --------------------------
 def get_inversion_inputs(fault, datasets, quadtree_params={}, date=-1, LOS=False, disp_components=[0, 1, 2], slip_components=[0, 1, 2], rotation=np.nan, squeeze=False,
-                         run_dir='.', quadtree_file_stem='_quadtree.pkl', greenfunc_file_stem='_greens_functions.h5', verbose=False):
+                         quadtree_dir='.', quadtree_file_stem='_quadtree.pkl', greenfunc_file_stem='_greens_functions.h5', verbose=False):
     """
     Prepare data to be ingested by inversion
 
@@ -143,7 +141,7 @@ def get_inversion_inputs(fault, datasets, quadtree_params={}, date=-1, LOS=False
         
         # ---------- Downsampling ----------
         # Load existing quadtree or perform downsampling and save to disk 
-        quadtree_file = f'{run_dir}/{key}{quadtree_file_stem}'
+        quadtree_file = f'{quadtree_dir}/{key}{quadtree_file_stem}'
         look          = np.array([datasets[key]['look_e'].compute().data.flatten(), datasets[key]['look_n'].compute().data.flatten(), datasets[key]['look_u'].compute().data.flatten()]).T
 
         if os.path.exists(quadtree_file):
@@ -173,7 +171,7 @@ def get_inversion_inputs(fault, datasets, quadtree_params={}, date=-1, LOS=False
             look = []
 
         # Load or generate Green's functions
-        greens_function_file = f'{run_dir}/{key}{greenfunc_file_stem}'
+        greens_function_file = f'{quadtree_dir}/{key}{greenfunc_file_stem}'
 
         if os.path.exists(greens_function_file):
             # Load existing Green's Functions
@@ -185,7 +183,6 @@ def get_inversion_inputs(fault, datasets, quadtree_params={}, date=-1, LOS=False
                 print('\n' + "Redoing Green's functions")
 
                 # Generate LOS Green's functions for dowmsampled coordinates
-                # GF = fault.LOS_greens_functions(tree.x, tree.y, tree.look)
                 GF = fault.greens_functions(tree.x, tree.y, look=look, disp_components=disp_components, slip_components=slip_components, rotation=rotation, squeeze=squeeze)
 
                 # Save to disk
@@ -193,12 +190,12 @@ def get_inversion_inputs(fault, datasets, quadtree_params={}, date=-1, LOS=False
                 gfile.create_dataset('GF', data=GF)
                 gfile.close()
                 print('\n' + f"Green's functions saved to {greens_function_file}")
+
             else:
                 print('\n' + "Loading Green's functions")
 
         else:
             # Generate LOS Green's functions for dowmsampled coordinates
-            # GF = fault.LOS_greens_functions(tree.x, tree.y, tree.look)
             GF = fault.greens_functions(tree.x, tree.y, look=look, disp_components=disp_components, slip_components=slip_components, rotation=rotation, squeeze=squeeze)
 
             # Save to disk
