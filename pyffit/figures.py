@@ -13,6 +13,7 @@ from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 from matplotlib.patches import Polygon, Rectangle, Ellipse
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from matplotlib.animation import FuncAnimation, FFMpegWriter
+from matplotlib.transforms import Affine2D
 
 
 stem       = '/Users/evavra/Projects/Taiwan/ALOS2/A139/F4/'
@@ -30,6 +31,42 @@ grid_dims = (1, 4) #
 region    = []
 cmap      = cmc.roma
 figsize   = (14, 8.2)
+
+
+def plot_rotated_fault(fault, x, y, data, mask=[], vlim=[0, 1], cmap='viridis', title='', label='', sites=[], xlim=[-20, 30], ylim=[-10, 10], site_color='C0', s=1, marker='.',  file_name='', show=True, dpi=300):
+    """
+    Plot data in fault-oriented coordinate system.
+    """
+
+    fig, ax = plt.subplots(figsize=(14, 8.2), constrained_layout=True)
+    transform = Affine2D().rotate_deg_around(0, 0, fault.avg_strike + 90) + ax.transData
+
+    ax.plot(fault.trace[:, 0] - fault.origin_r[0], fault.trace[:, 1] - fault.origin_r[1], c='k', zorder=0, transform=transform)
+    im = ax.scatter(x - fault.origin_r[0], y  - fault.origin_r[1], c=data, vmin=vlim[0], vmax=vlim[1], marker=marker, s=s, cmap=cmap, transform=transform)
+
+    if len(sites) > 0:
+        ax.scatter(sites['x'] - fault.origin_r[0], sites['y']  - fault.origin_r[1], facecolor=site_color, edgecolor='k', s=50, transform=transform, zorder=100)
+
+        for i, site in sites.iterrows():
+            ax.annotate(site['name'], [site['x'] - fault.origin_r[0], site['y']  - fault.origin_r[1]], xycoords=transform, zorder=1000)
+
+    ax.set_title(title)
+    ax.set_aspect(1)
+    ax.set_xlim(xlim)
+    ax.set_ylim(ylim)
+    ax.set_xlabel('X (km)')
+    ax.set_ylabel('Y (km)')
+    ax.set_facecolor('gainsboro')
+    fig.colorbar(im, label=label, shrink=0.5)
+
+    if len(file_name) > 0:
+        fig.savefig(file_name, dpi=dpi)
+        plt.close()
+        
+    if show:
+        plt.show()
+
+    return fig, ax
 
 
 def animation():
@@ -481,41 +518,36 @@ def plot_fault_3d(mesh, triangles, c=[], fig_ax=[], edges=False, cmap_name='viri
     fig.tight_layout()
     if len(file_name) > 0:
         plt.savefig(file_name, dpi=dpi)
+        plt.close()
 
     if show:
         plt.show()
-    plt.close()
+        plt.close()
     
     return fig, ax
 
 
 def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), orientation='horizontal', cmap_disp='coolwarm', x_ax='east', fault_height=0.5, 
-                      fault_lim='mesh', title='', fault_label='', markersize=10, trace=False, vlim_disp=[], vlim_slip=[], xlim=[], ylim=[],  n_tick=11, n_seg=10, mu=0, eta=0, 
-                      file_name='', show=False, dpi=300):
+                      fault_lim='mesh', title='', fault_label='', markersize=10, trace=False, vlim_disp=[], vlim_slip=[], xlim=[], ylim=[], n_tick=11, n_seg=10, mu=0, eta=0, 
+                      shrink=0.01, fontsize=8, file_name='', show=False, dpi=300):
     """
     Plot three displacement panels above side-view of fault model.
     """
 
-    if x_ax == 'east':
-        xlabel = 'East (km)'
-        x_idx  = 0
-    else:
-        xlabel = 'North (km)'
-        x_idx  = 1
+    # if x_ax == 'east':
+    #     xlabel = 'East (km)'
+    #     x_idx  = 0
+    # else:
+    #     xlabel = 'North (km)'
+    #     x_idx  = 1
 
     # Set up figure and axes
     fig   = plt.figure(figsize=figsize)
     fig.suptitle(title)
+    x_idx = 0
 
     if orientation == 'horizontal':
         gs    = fig.add_gridspec(len(fault_panels) + 1, 4, width_ratios=(1, 1, 1, 0.05), height_ratios=[1] + [fault_height for i in range(len(fault_panels))])
-        # ax0   = fig.add_subplot(gs[0, 0])
-        # ax1   = fig.add_subplot(gs[0, 1])
-        # ax2   = fig.add_subplot(gs[0, 2])
-        # ax3   = fig.add_subplot(gs[1, :-1])
-
-        # cax0  = fig.add_subplot(gs[0, 3])
-        # cax1  = fig.add_subplot(gs[1, -1])
 
         data_axes  = [fig.add_subplot(gs[0, i]) for i in range(3)]
         fault_axes = [fig.add_subplot(gs[i + 1, :-1]) for i in range(len(fault_panels))]
@@ -527,13 +559,8 @@ def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), 
             ax.set_xlabel('East (km)')
 
     elif orientation == 'vertical':
-        gs    = fig.add_gridspec(3 + len(fault_panels), 2, width_ratios=(1, 0.025), height_ratios=[1 for i in range(len(panels))] + [fault_height for i in range(len(fault_panels))])
-        # ax0   = fig.add_subplot(gs[0, 0])
-        # ax1   = fig.add_subplot(gs[1, 0])
-        # ax2   = fig.add_subplot(gs[2, 0])
-        # ax3   = fig.add_subplot(gs[3, 0])
-        # cax0  = fig.add_subplot(gs[1, 1])
-        # cax1  = fig.add_subplot(gs[3, 1])
+        gs    = fig.add_gridspec(3 + len(fault_panels), 2, width_ratios=(1, 0.025), height_ratios=[1 for i in range(len(panels))] + [1 for i in range(len(fault_panels))],
+                                 hspace=0.2, wspace=0.1)
 
         data_axes  = [fig.add_subplot(gs[i, 0]) for i in range(3)]
         fault_axes = [fig.add_subplot(gs[3 + i, 0]) for i in range(len(fault_panels))]
@@ -541,10 +568,10 @@ def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), 
 
         # labels
         for ax in data_axes:
-            ax.set_ylabel('North (km)')
+            ax.set_ylabel('Y (km)')
             ax.set_xticklabels([])
 
-        data_axes[2].set_xlabel(xlabel)
+        fault_axes[-1].set_xlabel('X (km)')
 
         for ax in fault_axes:
             ax.set_ylabel('Depth (km)')
@@ -563,10 +590,6 @@ def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), 
     else:
         vmin_disp = [vlim[0] for vlim in vlim_disp]
         vmax_disp = [vlim[1] for vlim in vlim_disp]
-
-    # if len(vlim_disp) == 0:
-    #     all_data  = np.concatenate((panels[0]['data'].flatten(), panels[1]['data'].flatten(), panels[2]['data'].flatten()))
-    #     vlim_disp = 0.7*np.nanmax(np.abs(all_data))
 
     # ---------------------------------------- Displacement panels ----------------------------------------
     for i in range(3):
@@ -597,7 +620,7 @@ def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), 
         else:
             k = i
 
-        fig.colorbar(im, cax=caxes[k], label='Displacement (mm)', shrink=0.05)
+        fig.colorbar(im, cax=caxes[k], label='Displacement (mm)', shrink=shrink)
 
     # Get axes limits
     if len(xlim) == 0:
@@ -610,7 +633,7 @@ def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), 
     for i in range(3):
         data_axes[i].plot(mesh[:, 0][mesh[:, 2] == 0], mesh[:, 1][mesh[:, 2] == 0], linewidth=1, c='k')
 
-        data_axes[i].set_title(panels[i]['label'])
+        data_axes[i].set_title(panels[i]['label'], fontsize=fontsize)
         data_axes[i].set_xlim(xlim)
         data_axes[i].set_ylim(ylim)
 
@@ -653,9 +676,9 @@ def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), 
             fault_axes[i].set_ylim(ylim[0] - ylim[1], 0)
 
         fault_axes[i].set_aspect(1)
-        fault_axes[i].set_title(panel['title'])
+        fault_axes[i].set_title(panel['title'], fontsize=fontsize)
 
-        fig.colorbar(sm, cax=caxes[k + i + 1], label=panel['label'])
+        fig.colorbar(sm, cax=caxes[k + i + 1], label=panel['label'], shrink=shrink)
 
     # Finish up
     fig.tight_layout()
