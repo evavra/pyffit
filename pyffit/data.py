@@ -62,34 +62,47 @@ def read_grd(file, coord_type='range', check_lon=False, flatten=False):
         return x, y, z
 
 
-def write_grd(x, y, z, file_name, T=True, V=False):
+def write_grd(x, y, z, file_name, coords_key='geographic', data_key='z', T=True, V=False):
 
     """
     Write gridded data to GMT-compatible NetCDF file. 
     Requires GMT installation to modify grid registration (-T option).
     """
 
-    data = xr.Dataset({'z': (['y', 'x'], z)}, coords={'y':(['y'], y), 'x':(['x'], x)})
+    # Determine coordinate type
+    if coords_key == 'geographic':
+        xkey = 'lon'
+        ykey = 'lat'
+    else:
+        xkey = 'y'
+        ykey = 'y'
+
+    data = xr.Dataset({data_key: ([ykey, xkey], z)}, coords={ykey:([ykey], y), xkey:([xkey], x)})
 
     # Fix headers
-    x_inc = np.min(np.diff(data.x.values))
-    y_inc = np.min(np.diff(data.y.values))
+    x_inc = np.min(np.diff(data.coords[xkey].values))
+    y_inc = np.min(np.diff(data.coords[ykey].values))
 
-    x_min_orig = np.min(data.x.values)
-    x_max_orig = np.max(data.x.values)
-    y_min_orig = np.min(data.y.values)
-    y_max_orig = np.max(data.y.values)
+    x_min_orig = np.min(data.coords[xkey].values)
+    x_max_orig = np.max(data.coords[xkey].values)
+    y_min_orig = np.min(data.coords[ykey].values)
+    y_max_orig = np.max(data.coords[ykey].values)
 
-    data.x.attrs['actual_range'] = np.array([x_min_orig, x_max_orig])
-    data.y.attrs['actual_range'] = np.array([y_min_orig, y_max_orig])
+    data.coords[xkey].attrs['actual_range'] = np.array([x_min_orig, x_max_orig])
+    data.coords[ykey].attrs['actual_range'] = np.array([y_min_orig, y_max_orig])
 
     data.to_netcdf(path=file_name, mode='w')
 
     if T:
-        x_min = np.min(data.x.values) - x_inc/2 
-        x_max = np.max(data.x.values) + x_inc/2
-        y_min = np.min(data.y.values) - y_inc/2
-        y_max = np.max(data.y.values) + y_inc/2
+        # x_min = np.min(data.x.values) - x_inc/2 
+        # x_max = np.max(data.x.values) + x_inc/2
+        # y_min = np.min(data.y.values) - y_inc/2
+        # y_max = np.max(data.y.values) + y_inc/2
+
+        x_min = np.min(data.coords[xkey].values) - x_inc/2 
+        x_max = np.max(data.coords[xkey].values) + x_inc/2
+        y_min = np.min(data.coords[ykey].values) - y_inc/2
+        y_max = np.max(data.coords[ykey].values) + y_inc/2
 
         bounds = ' -R' + str(x_min) + '/' + str(x_max) + '/' + str(y_min) + '/' + str(y_max)
         # print(bounds)
@@ -347,7 +360,10 @@ def get_index_from_files(files, index_range, use_dates=True, use_datetime=True):
     # Return as Datetime objects if specified, otherwise just strings
     if use_dates:
         if use_datetime:
-            return [dt.datetime.strptime(idx, '%Y%m%d') for idx in indices]
+            try:
+                return [dt.datetime.strptime(idx, '%Y%m%d') for idx in indices]
+            except ValueError:
+                return [dt.datetime.strptime(idx, '%Y-%m-%d') for idx in indices]
         else:
             return [f'{idx[:4]}-{idx[4:6]}-{idx[6:]}' for idx in indices]
     else:
@@ -378,7 +394,7 @@ def read_insar_dataset(data_dir, file_format, xkey='lon', ykey='lat', check_lon=
 
 def load_insar_dataset(data_dir, data_file_format, name, ref_point, data_factor=1, xkey='lon', coord_type='geographic', date_index_range=[0, 8], check_lon=False, reference_time_series=True,
                        velo_model_file='', velo_model_factor=-0.1, incremental=False, use_dates=True, use_datetime=True,
-                       look_dir='', look_filenames=['look_e.grd', 'look_n.grd', 'look_u.grd',], mask_file=''):
+                       look_dir='', look_filenames=['look_e.grd', 'look_n.grd', 'look_u.grd',], mask_file='', remove_mean=False):
     
     # Load InSAR data
     dataset = read_insar_dataset(data_dir, data_file_format, xkey=xkey, date_index_range=date_index_range, check_lon=check_lon, use_dates=use_dates, use_datetime=use_datetime)
@@ -386,6 +402,10 @@ def load_insar_dataset(data_dir, data_file_format, name, ref_point, data_factor=
     if data_factor != 1:
         dataset['z'] = data_factor * dataset['z']
 
+    if remove_mean:
+        for k in range(len(dataset.date)):
+            print(k)
+            dataset['z'][k, :, :] -= dataset['z'][k, :, :].mean()
 
     if len(mask_file) > 0:
         # Apply mask consisting of ones and NaNs to dataset 
@@ -455,6 +475,8 @@ def load_insar_dataset(data_dir, data_file_format, name, ref_point, data_factor=
 
         # # Convert to mm and remove interseismic deformation
         dataset['z'] = dataset['z'] - velo_model
+
+
 
     # Add name
     dataset.attrs["name"] = name
