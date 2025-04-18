@@ -3,6 +3,7 @@ import os
 import gc
 import sys
 import glob
+import copy
 import h5py
 import time
 import shutil
@@ -23,10 +24,13 @@ from matplotlib import colors
 import datetime
 from types import ModuleType
 from numba import jit
+from matplotlib.transforms import Affine2D
+from matplotlib.lines import Line2D
 
 from collections import Counter
 import linecache
 import tracemalloc
+
 
 def main():
     """
@@ -40,13 +44,17 @@ def main():
     # make_fault_movie()
 
     # sys.stdout = pyffit.utilities.Logger('/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/log.txt')
+    sys.stdout.flush() # remove buffering of stdout
+
     start = time.time()
     param_file = sys.argv[1]
 
     # Load parameters
     mode, params = load_parameters(param_file)
     
-    # Perform standard NIF run
+    if 'downsample' in mode:
+        check_downsampling(**params)
+    
     if 'NIF' in mode:
         run_nif(**params)
         
@@ -97,6 +105,185 @@ def load_parameters(file_name):
 
 
 # ------------------ Drivers ------------------
+def check_downsampling(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, data_dir, 
+                        date_index_range=[-22, -14], xkey='x', coord_type='xy', dataset_name='data',
+                        check_lon=False, reference_time_series=True, use_dates=False, use_datetime=False, dt=1, data_factor=1,
+                        model_file='', mask_file='', estimate_covariance=False, mask_dists=[3], n_samp=2*10**7, r_inc=0.2, r_max=80, mask_dir='.', cov_dir='.', 
+                        m0=[0.9, 1.5, 5], c_max=2, sv_max=2, ref_point=[-116, 33.5], avg_strike=315.8, trace_inc=0.01, poisson_ratio=0.25, 
+                        shear_modulus=6*10**9, disp_components=[1], slip_components=[0], resolution_threshold=2.3e-1, 
+                        width_min=0.1, width_max=10, max_intersect_width=100, min_fault_dist=1, max_iter=10, 
+                        smoothing_samp=False, edge_slip_samp=False, omega=1e1, sigma=1e1, kappa=2e1, mu=2e1, 
+                        eta=2e1, steady_slip=False, constrain=False, v_sigma=1e-9, W_sigma=1,  W_dot_sigma=1, v_lim=(0,3), W_lim=(0,30), W_dot_lim=(0,50), 
+                        xlim=[-35.77475071,26.75029172], ylim=[-26.75029172, 55.08597388], vlim_slip=[0, 20], 
+                        vlim_disp=[[-10,10], [-10,10], [-1,1]], cmap_slip=cmc.lajolla, cmap_disp=cmc.vik, figsize=(10, 10), dpi=75, markersize=40, 
+                        param_file='params.py'
+                        ):
+    """
+    Perform downsampling.
+    """
+
+    start_total = time.time()
+
+    # ------------------ Prepare run directories and files ------------------
+    # Get directory for downsampled data
+    pyffit.utilities.check_dir_tree(downsampled_dir + '/' + dataset_name)
+        
+    # Get parameter values to check
+    quadtree_dir = get_downsampled_data_directory(downsampled_dir + '/' + dataset_name, param_file)
+
+    # -------------------------- Prepare original data --------------------------    
+    # Load fault model and regularization matrices
+    fault = pyffit.finite_fault.TriFault(mesh_file, triangle_file, slip_components=slip_components, 
+                                         poisson_ratio=poisson_ratio, shear_modulus=shear_modulus, 
+                                         verbose=False, trace_inc=trace_inc, mu=mu, eta=eta,
+                                         avg_strike=avg_strike, ref_point=ref_point)
+    n_patch = len(fault.triangles)
+
+    if steady_slip:
+        n_dim   = 3 * n_patch
+    else:
+        n_dim   = 2 * n_patch
+
+    # Load data
+    dataset = pyffit.data.load_insar_dataset(data_dir, file_format, dataset_name, ref_point, data_factor=data_factor, xkey=xkey, 
+                                             coord_type=coord_type, date_index_range=date_index_range, 
+                                             check_lon=check_lon, reference_time_series=reference_time_series, 
+                                             incremental=False, use_dates=use_dates, use_datetime=use_datetime, 
+                                             mask_file=mask_file, remove_mean=False)
+    datasets = {dataset_name: dataset}
+    n_obs    = len(dataset.date)
+    x        = dataset.coords['x'].compute().data.flatten()
+    y        = dataset.coords['y'].compute().data.flatten()
+
+    # Load original slip model
+    if len(model_file) > 0:
+        try:
+            with h5py.File(model_file, 'r') as file:
+                slip_model = file['slip_model'][()]
+        except KeyError:
+            print('Error: speficied model_file could not be located')
+            sys.exit(1)
+    else:
+        slip_model = np.full([n_patch, 3, n_obs], np.nan)
+
+    # ------------------ Prepare inversion inputs ------------------
+    # Get dictionary of quadtree parameters
+    quadtree_params = dict(
+                            resolution_threshold=resolution_threshold,
+                            width_min=width_min,
+                            width_max=width_max,
+                            max_intersect_width=max_intersect_width,
+                            min_fault_dist=min_fault_dist,
+                            max_iter=max_iter, 
+                            poisson_ratio=poisson_ratio,
+                            smoothing=smoothing_samp,
+                            edge_slip=edge_slip_samp,
+                            disp_components=disp_components,
+                            slip_components=slip_components,
+                            quadtree_dir=quadtree_dir,
+                            )
+
+    # Prepare inversion inputs
+    inputs = pyffit.inversion.get_inversion_inputs(fault, datasets, quadtree_params, date=-1, quadtree_dir=quadtree_dir, verbose=False)
+    tree   = inputs[dataset_name].tree
+    n_data = inputs[dataset_name].tree.x.size
+    dt    /= 365.25
+
+    # -------------------------- Prepare NIF objects --------------------------
+    print(f'Number of fault elements: {n_patch}')
+    print(f'Number of data points:    {n_data}')
+
+    # Prepare data
+    samp_file = f'cutoff={resolution_threshold:.1e}_wmin={width_min:.2f}_wmax={width_max:.2f}_max_int_w={max_intersect_width:.1f}_min_fdist={min_fault_dist:.2f}_max_it={max_iter:0f}'
+    d, std = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{dataset_name}/{samp_file}.h5')
+
+    d_samp = d[:, :n_data]
+
+    avg_std = np.mean(std, axis=0)
+    avg_v   = np.mean(d_samp, axis=0)
+
+    # Plot pixels with value opposide of expected
+    label = 'Sign'
+    cmap  = cmc.vik_r
+    vlim  = [-2, 2]
+    c     = np.sign(-np.mean(d_samp, axis=0))
+    file_name = ''
+
+    # Plot fault intesecting cells
+    label = 'Intersections'
+    cmap  = cmc.lajolla
+    vlim  = [-2, 2]
+    c     = tree.intersects
+    file_name = ''
+    
+    # Plot standard deviation
+    label     = 'Standard deviation (mm)'
+    cmap      = cmc.lajolla
+    vlim      = [0, 10]
+    show      = False
+    s         = 5
+    c         = avg_std
+    file_name = f'{quadtree_dir}/rotated_std.png'
+    title     = f'Number of cells with ' + r'$\sigma > $' + f'{vlim[1]} mm: {np.sum(avg_std > vlim[1])}/{len(avg_std)}'
+    pyffit.figures.plot_rotated_fault(fault, tree.x, tree.y, c, title=title, vlim=vlim, cmap=cmap, label=label, s=s, show=show, file_name=file_name)
+
+    # Plot standard devation with respect to mean velocity
+    label     = 'Relative standard deviation'
+    cmap      = cmc.vik
+    vlim      = [0, 2]
+    show      = False
+    s         = 5
+    c         = avg_std/np.abs(avg_v)
+    file_name = f'{quadtree_dir}/rotated_std_relative.png'
+
+    pyffit.figures.plot_rotated_fault(fault, tree.x, tree.y, c, vlim=vlim, cmap=cmap, label=label, s=s, show=show, file_name=file_name)
+    
+
+    # Plot mean STD histogram
+    xlim = [0, 30]
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.set_title(f'Number of quadtree cells: {std.shape[1]}')
+    ax.hist(avg_std, range=xlim, bins=50, align='mid', histtype='step', color='k', cumulative=False, density=False)
+    ax.set_xlim(xlim)
+    ax.set_xlabel('Cell standard deviation (mm/yr)')
+    ax.set_ylabel('Count')
+    # ax1 = ax.twinx()
+    # ax1.set_ylabel('Density')
+    plt.savefig(f'{quadtree_dir}/cell_std.png', dpi=300)
+    plt.close()
+
+    # Plot relative STD histogram
+    xlim = [0, 10]
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.set_title(f'Number of quadtree cells: {std.shape[1]}')
+    ax.hist(avg_std/np.abs(avg_v), range=xlim, bins=50, align='mid', histtype='step', color='k', cumulative=False, density=False)
+    ax.set_xlim(xlim)
+    ax.set_xlabel('Cell relative standard deviation')
+    ax.set_ylabel('Count')
+    # ax1 = ax.twinx()
+    # ax1.set_ylabel('Density')
+    plt.savefig(f'{quadtree_dir}/cell_std_relative.png', dpi=300)
+    plt.close()
+
+
+    # Plot cell count histogram
+    xlim = [0, 10]
+    fig, ax = plt.subplots(figsize=(6, 6))
+    ax.set_title(f'Number of quadtree cells: {std.shape[1]}')
+    ax.hist(tree.real_count, range=[0, 10], bins=10, align='mid', histtype='step', color='k', cumulative=True, density=False)
+    ax.set_xlim(xlim)
+    ax.set_xlabel('Number of pixels')
+    ax.set_ylabel('Count')
+    ax1 = ax.twinx()
+    ax1.set_ylabel('Density')
+    plt.savefig(f'{quadtree_dir}/pixel_count.png', dpi=300)
+    plt.close()
+
+
+
+    return
+
+
 def analyze_disp(mesh_file, triangle_file, data_dir, file_format, run_dir, samp_file, site_file):
     """
     Analyze network inversion filter results.
@@ -104,12 +291,15 @@ def analyze_disp(mesh_file, triangle_file, data_dir, file_format, run_dir, samp_
     start = time.time()
 
     result_dir = f'{run_dir}/Results'
+    site_dir   = f'{result_dir}/Sites'
+    pyffit.utilities.check_dir_tree(site_dir)
+    pyffit.utilities.check_dir_tree(f'{result_dir}/Data')
 
     # Get most recent parameter file from run directory
-
     files = sorted(glob.glob(f'{run_dir}/Scripts/*/*param*'))
     mode, params = load_parameters(files[-1])
 
+    # Extract parameters
     slip_components = params['slip_components']
     poisson_ratio=params['poisson_ratio'] 
     shear_modulus = params['shear_modulus']
@@ -141,13 +331,20 @@ def analyze_disp(mesh_file, triangle_file, data_dir, file_format, run_dir, samp_
     edge_slip_samp = params['edge_slip_samp']
     disp_components = params['disp_components']
     dt = params['dt']
+    vlim_disp = params['vlim_disp']
+    avg_strike = params['avg_strike']
 
-    # -------------------------- Prepare original data --------------------------    
+
+    # -------------------------- Prepare original data -------------------------- =       
     # Load fault model and regularization matrices
     fault = pyffit.finite_fault.TriFault(mesh_file, triangle_file, slip_components=slip_components, 
                                          poisson_ratio=poisson_ratio, shear_modulus=shear_modulus, 
-                                         verbose=False, trace_inc=trace_inc, mu=mu, eta=eta)
+                                         verbose=False, trace_inc=trace_inc, mu=mu, eta=eta,
+                                         avg_strike=avg_strike, ref_point=ref_point)
+    
+
     n_patch = len(fault.triangles)
+    slip_start = steady_slip * n_patch  # Get start of transient slip
 
     if steady_slip:
         n_dim   = 3 * n_patch
@@ -159,24 +356,15 @@ def analyze_disp(mesh_file, triangle_file, data_dir, file_format, run_dir, samp_
                                              coord_type=coord_type, date_index_range=date_index_range, 
                                              check_lon=check_lon, reference_time_series=reference_time_series, 
                                              incremental=False, use_dates=use_dates, use_datetime=use_datetime, 
-                                             mask_file=mask_file)
+                                             mask_file=mask_file, remove_mean=False)
     datasets = {dataset_name: dataset}
     n_obs    = len(dataset.date)
     x        = dataset.coords['x'].compute().data.flatten()
     y        = dataset.coords['y'].compute().data.flatten()
+    x_grid   = dataset.coords['x'].compute().data
+    y_grid   = dataset.coords['y'].compute().data
 
-    # Load original slip model
-    if len(model_file) > 0:
-        try:
-            with h5py.File(model_file, 'r') as file:
-                slip_model = file['slip_model'][()]
-        except KeyError:
-            print('Error: speficied model_file could not be located')
-            sys.exit(1)
-    else:
-        slip_model = np.full([n_patch, 3, n_obs], np.nan)
-
-    # ------------------ Prepare inversion inputs ------------------
+    # ------------------ Prepare data and model ------------------
     # Get dictionary of quadtree parameters
     quadtree_params = dict(
                             resolution_threshold=resolution_threshold,
@@ -196,27 +384,206 @@ def analyze_disp(mesh_file, triangle_file, data_dir, file_format, run_dir, samp_
     # Prepare inversion inputs
     inputs = pyffit.inversion.get_inversion_inputs(fault, datasets, quadtree_params, date=-1, run_dir=run_dir, verbose=False)
     n_data = inputs[dataset_name].tree.x.size
+    tree = inputs[dataset_name].tree
     dt    /= 365.25
 
     # Prepare downsampled data
-    # print(samp_file)
-    # with open(samp_file, 'rb') as f:
-    #     d = pickle.load(f)
     samp_file = f'cutoff={resolution_threshold:.1e}_wmin={width_min:.2f}_wmax={width_max:.2f}_max_int_w={max_intersect_width:.1f}_min_fdist={min_fault_dist:.2f}_max_it={max_iter:0f}'
-    d         = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{samp_file}.h5')
-
-
+    d, std    = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{samp_file}.h5')
+    
+    # Load slip model
+    with h5py.File(f'{run_dir}/results_smoothing.h5', 'r') as file:
+        slip_model = file['x_s'][:, slip_start:slip_start + n_patch][()]
+        disp_model = file['model'][()]
+        resid      = file['resid'][()]
+        rms        = file['rms'][()]
+    
     # Load sites to extract time series
-    def load_site_table(site_file):
+    sites = load_site_table(site_file, ref_point)
 
-        sites = pd.read_csv(site_file, header=0, delim_whitespace=True)
-        return sites
+    # ------------------ Rotated plots ------------------
+    # Plot absolute average error
+    int_abs_resid = np.sum(np.abs(resid), axis=0)/(len(dataset.date))
+    vlim       = [0, 10]
+    label      = 'Average absolute misfit (mm)'
+    cmap       = cmc.lajolla
+    site_color = 'C0'
+    pyffit.figures.plot_rotated_fault(fault, tree.x, tree.y, int_abs_resid, vlim=vlim, cmap=cmap, sites=sites, site_color=site_color, label=label, file_name=f'{site_dir}/avg_misfit_abs.png')
 
+    # Plot true average error
+    int_resid  = -np.sum(resid, axis=0)/(len(dataset.date))
+    vlim       = [-10, 10]
+    label      = 'Average misfit (mm)'
+    cmap       = cmc.vik
+    site_color = 'gold'
+    pyffit.figures.plot_rotated_fault(fault, tree.x, tree.y, int_resid, vlim=vlim, cmap=cmap, sites=sites, site_color=site_color, label=label, file_name=f'{site_dir}/avg_misfit.png')
 
-    sites = load_site_table(site_file)
-    print(sites)
+    # Plot cell STD
+    avg_std  = np.mean(std[:, :len(tree.x)], axis=0)
+    vlim       = [0, 10]
+    label      = 'Average standard deviation (mm)'
+    cmap       = cmc.hawaii
+    site_color = 'k'
+    pyffit.figures.plot_rotated_fault(fault, tree.x, tree.y, avg_std, vlim=vlim, cmap=cmap, sites=sites, site_color=site_color, label=label, file_name=f'{site_dir}/avg_std.png')
+    
+    # Plot cell counts
+    for count in range(1, 5):
+        pixel_count          = np.zeros_like(tree.x)
+        i_count              = tree.real_count == count
+        pixel_count[i_count] = 1
 
+        vlim       = [0, 1]
+        label      = 'Single pixel cells locations'
+        cmap       = cmc.lajolla
+        site_color = 'k'
+        file_name  = f'{site_dir}/pixel_count_{count}.png'
 
+        fig, ax = pyffit.figures.plot_rotated_fault(fault, tree.x, tree.y, pixel_count, vlim=vlim, cmap=cmap, site_color=site_color, label=label, show=False)
+        transform = Affine2D().rotate_deg_around(0, 0, fault.avg_strike + 90) + ax.transData
+        ax.scatter(tree.x[i_count] - fault.origin_r[0], 
+                tree.y[i_count]  - fault.origin_r[1], 
+                c=pixel_count[i_count], 
+                vmin=vlim[0], vmax=vlim[1], marker='.', cmap=cmap, transform=transform, zorder=100)
+        ax.set_title(f'Number of {count}-pixel cells: {sum(i_count)}/{pixel_count.size}')
+        
+        fig.savefig(file_name, dpi=300)
+    
+    # Plot STDs
+    for std in range(10, 51, 10):
+        std_count          = np.zeros_like(tree.x)
+        i_count            = tree.std > std
+        std_count[i_count] = 1
+
+        vlim       = [0, 1]
+        label      = f'Cell standard deviation >{std:.0f} mm'
+        cmap       = cmc.lajolla
+        site_color = 'k'
+        file_name  = f'{result_dir}/Data/std_{std}.png'
+
+        fig, ax = pyffit.figures.plot_rotated_fault(fault, tree.x, tree.y, std_count, vlim=vlim, cmap=cmap, site_color=site_color, label=label, show=False)
+        transform = Affine2D().rotate_deg_around(0, 0, fault.avg_strike + 90) + ax.transData
+        ax.scatter(tree.x[i_count] - fault.origin_r[0], 
+                tree.y[i_count]  - fault.origin_r[1], 
+                c=std_count[i_count], 
+                vmin=vlim[0], vmax=vlim[1], marker='.', cmap=cmap, transform=transform, zorder=100)
+        ax.set_title(f'Cell standard deviation > {std:.0f} mm {sum(i_count)}/{std_count.size}')
+        
+        fig.savefig(file_name, dpi=300)
+    
+
+    return
+
+    # ------------------ Analyze site time series ------------------
+
+    # Extract time series for each site
+    site_dist = 0.2 # km
+    vlines    = [datetime.datetime(2017, 9, 8, 0, 0, 0), datetime.datetime(2019, 7, 5, 0, 0, 0)]
+    ylim      = [-50, 50]
+
+    for name in sites['name']:
+        # Get coordinates
+        site   = sites[sites['name'] == name]
+        x_site = site['x'].values[0]
+        y_site = site['y'].values[0]
+
+        # Get pixels within site_dist
+        dist_pix  = np.sqrt((x_site - x_grid)**2 + (y_site - y_grid)**2)
+        i_x, i_y = np.where(dist_pix <= site_dist)
+        n_pixel  = len(i_x)
+
+        # Get pixels used in nearest cell
+        dist_cell = np.sqrt((site['x'].values[0] - tree.x)**2 + (site['y'].values[0] - tree.y)**2)
+        i_cell    = np.argmin(dist_cell)
+        cell      = tree.cells[i_cell]
+        n_cell    = cell.data.x.size
+
+        # Extract cell timeseries
+        cell_data = np.empty((n_obs, n_cell))
+
+        for i in range(n_cell):
+            dist_pixel = np.sqrt((cell.data.x[i] - x_grid)**2 + (cell.data.y[i] - y_grid)**2)
+            j_x, j_y = np.where(dist_pixel == dist_pixel.min())
+
+            if np.isnan(dataset['z'][0, j_x, j_y]):
+                cell_data[:, i] = np.nan
+            else:
+                cell_data[:, i] = dataset['z'][:, j_x, j_y].compute().data.flatten()
+ 
+        # ---------------------------------- Plot ----------------------------------
+        fig = plt.figure(figsize=(9, 9), constrained_layout=True)
+        # fig.suptitle(f'Site: {name}')
+
+        gs = fig.add_gridspec(2, 2, width_ratios=(1, 1), height_ratios=[1, 1],
+                                 hspace=0.0, wspace=0.05)
+
+        ax0 = fig.add_subplot(gs[0, :])
+        ax1 = fig.add_subplot(gs[1, 0])
+        ax2 = fig.add_subplot(gs[1, 1])
+        axes = [ax0, ax1, ax2]
+
+        for i in range(n_cell):
+
+            if cell.data.side[i] == cell.side:
+                if cell.side == 1:
+                    c = 'C0'
+                else:
+                    c = 'C3'
+                axes[2].plot(dataset.date, cell_data[:, i], c='gainsboro')
+
+            else:
+                c = 'gainsboro'
+
+            # ax.plot(dataset.date, cell_data[:, i], c=c, alpha=0.5)
+
+        axes[2].vlines(vlines, ylim[0], ylim[1], color='gainsboro', linestyle='--')
+        axes[2].plot(dataset.date, d[:, i_cell], c='k', label='Downsampled data')
+        axes[2].plot(dataset.date, disp_model[:, i_cell], c='C3', label='Model')
+        axes[2].legend()
+        axes[2].set_ylim(ylim)
+        axes[2].set_box_aspect(1)
+        axes[2].set_xlabel('Date')
+        axes[2].set_ylabel('Displacement (mm)')
+        axes[2].yaxis.tick_right()
+        axes[2].yaxis.set_label_position('right') 
+        axes[2].set_title(f'Cell time series')
+
+        # Plot map
+        # transform = Affine2D().rotate_deg_around(0, 0, fault.avg_strike + 90) + axes[1].transData
+        # axes[1].plot(fault.trace[:, 0], fault.trace[:, 1], c='k', transform=transform)
+        # ax.scatter(x_grid[i_x, i_y], y_grid[i_x, i_y], c='gainsboro', s=100)
+        # ax.scatter(x_grid[i_x, i_y], y_grid[i_x, i_y], c=dataset['z'][-1, :, :].compute().data[dist_pix <= site_dist], cmap=cmc.vik, vmin=vlim_disp[0][0], vmax=vlim_disp[0][1], s=100)
+        # axes[1].scatter(x_site, y_site, facecolor='gold', edgecolor='k', s=200)
+        # axes[1].scatter(cell.data.x, cell.data.y, c=cell.data.side, cmap=cmc.vik_r, s=100)
+        # axes[1].scatter(cell.origin.x, cell.origin.y, facecolor='C1', edgecolor='k', s=200)
+        axes[1].plot(fault.trace[:, 0], fault.trace[:, 1], c='k', zorder=0)
+        # axes[1].scatter(tree.x , tree.y , c=d[-1, :n_data], marker='o', cmap=cmc.vik, vmin=vlim_disp[0][0], vmax=vlim_disp[0][1])
+        axes[1].scatter(cell.origin.x, cell.origin.y, facecolor='gold', edgecolor='k', s=50, zorder=100)
+        axes[1].scatter(cell.data.x , cell.data.y, c='gray',  marker='s', s=100, zorder=0, )
+        axes[1].scatter(cell.data.x , cell.data.y, c=cell.data.side * 0.5 * abs(cell.data.values/cell.data.values), cmap=cmc.vik_r, marker='s', s=100, zorder=0, vmin=-1, vmax=1)
+        axes[1].set_xlim(cell.origin.x - cell.width, cell.origin.x + cell.width)
+        axes[1].set_ylim(cell.origin.y - cell.width, cell.origin.y + cell.width)
+
+        axes[1].set_xlabel('East (km)')
+        axes[1].set_ylabel('North (km)')
+        axes[1].set_box_aspect(1)
+        axes[1].set_title(f'Quadtree cell pixels')
+
+        # Plot map
+        transform = Affine2D().rotate_deg_around(0, 0, fault.avg_strike + 90) + axes[0].transData
+        axes[0].plot(fault.trace[:, 0] - fault.origin_r[0], fault.trace[:, 1] - fault.origin_r[1], c='k', zorder=0, transform=transform)
+        axes[0].scatter(tree.x - fault.origin_r[0], tree.y  - fault.origin_r[1], c=d[-1, :n_data], marker='.', cmap=cmc.vik, vmin=vlim_disp[0][0], vmax=vlim_disp[0][1], transform=transform)
+        axes[0].scatter(sites['x'] - fault.origin_r[0], sites['y']  - fault.origin_r[1], facecolor='gold', edgecolor='k', s=50, transform=transform, zorder=100)
+        axes[0].set_aspect(1)
+        axes[0].set_xlim(-20, 30)
+        axes[0].set_ylim(-10, 10)
+        axes[0].set_xlabel('X (km)')
+        axes[0].set_ylabel('Y (km)')
+        axes[0].set_title(f'Site: {name}')
+
+        plt.tight_layout()
+        plt.savefig(f'{site_dir}/{name}.png', dpi=300)
+        plt.close()
+        
 
     # Load
     # # Load results
@@ -526,33 +893,97 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
     plt.savefig(f'{result_dir}/Evolution_W_dot.png', dpi=300)
     plt.close()
     
-    # # Plot covariances
-    # vlim = np.max(abs(results_forward.P_a[-1, :, :]))
+    # # -------------------- Plot fault and model fit --------------------
+    # params      = []
+    # date        = datasets[dataset_name].date[-1]
+    # title       = f'Date: {date}'
+    # orientation = 'horizontal'
+    # fault_lim   = 'mesh'
+    # show        = False
+    # figsize     = (6.5, 8)
+    # markersize  = 5
 
-    # fig, ax = plt.subplots(figsize=(4, 4))
-    # im = ax.imshow(results_forward.P_a[-1, :, :], vmin=-vlim, vmax=vlim, cmap='coolwarm', interpolation='none')
-    # ax.set_title(r'$P_a$ (backward pass)')
-    # fig.colorbar(im)
-    # plt.savefig(f'{result_dir}/Matrices/P_forward.png', dpi=300)
-    # # plt.show()
-    # plt.close()
+    # for run, results, s in zip(['Forward', 'Smoothed'], [results_forward, results_smoothing], [s_model_forward, s_model]):
+    #     for k in range(len(x_model)):
+            
+    #         if use_datetime:
+    #             date = datasets[dataset_name].date[k].dt.strftime('%Y-%m-%d').item()
+    #         else:
+    #             date = datasets[dataset_name].date[k]
 
-    # vlim = np.max(abs(results_smoothing.P_s[-1, :, :]))
+    #         slip_resid = s[k, :] - s_true[k, :]
 
-    # fig, ax = plt.subplots(figsize=(4, 4))
-    # im = ax.imshow(results_smoothing.P_s[0, :, :], vmin=-vlim, vmax=vlim, cmap='coolwarm', interpolation='none')
-    # ax.set_title(r'$P_a$ (forward pass)')
-    # fig.colorbar(im)
-    # plt.savefig(f'{result_dir}/Matrices/P_smoothed.png', dpi=300)
-    # plt.close()
-    
-    # Plot fault and model fit
+    #         title       = f'[{run}] Date: {date}'
+    #         file_name   = f'{result_dir}/Results/{run}_{date}.png'
+
+    #         data_panels = [
+    #                     dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=d[k, :n_data],          label=dataset_name),
+    #                     dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results['model'][k, :], label='Model'),
+    #                     dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results['resid'][k, :], label=f"Residuals ({np.abs(results['resid'][k, :]).mean():.2f}"+ r'$\pm$' + f"{np.abs(results['resid'][k, :]).std():.2f})"),
+    #                     ]
+            
+    #         fault_panels = [
+    #                     dict(slip=s[k, :], cmap=cmap_slip, vlim=vlim_slip, title='Slip model', label='Slip (mm)'),
+    #                     # dict(slip=slip_resid, cmap=cmc.vik,   vlim=[-1, 1], title=f'Residuals ({np.abs(slip_resid).mean():.2f}'+ r'$\pm$' + f'{np.abs(slip_resid).std():.2f})',  label='Residuals (mm)'),
+    #                     ]
+            
+    #         params.append([data_panels, fault_panels, fault, figsize, title, markersize, orientation, fault_lim, vlim_slip, cmap_disp, vlim_disp, xlim, ylim, dpi, show, file_name])
+
+    #         if k == len(x_model):
+    #             print(np.mean(np.abs(d[k, :n_data])), np.std(np.abs(d[k, :n_data])))
+
+    # # Parallel
+    # os.environ["OMP_NUM_THREADS"] = "1"
+    # start       = time.time()
+    # n_processes = multiprocessing.cpu_count()
+    # pool        = multiprocessing.Pool(processes=n_processes - 1)
+    # results     = pool.map(fault_panel_wrapper, params)
+    # pool.close()
+    # pool.join()
+    # del pool
+    # del results
+    # gc.collect()
+
+
+    # Rotate data so fault is horizontal
+    fault_r        = copy.deepcopy(fault)
+    x_r, y_r       = pyffit.utilities.rotate(inputs[dataset_name].tree.x, inputs[dataset_name].tree.y, np.deg2rad(avg_strike + 90))
+    x_mesh, y_mesh = pyffit.utilities.rotate(fault.mesh[:, 0], fault.mesh[:, 1], np.deg2rad(avg_strike + 90))
+    x_trace, y_trace = pyffit.utilities.rotate(fault.trace[:, 0], fault.trace[:, 1], np.deg2rad(avg_strike + 90))
+    x_r           -= np.mean(x_trace)
+    y_r           -= np.mean(y_trace)
+    x_mesh        -= np.mean(x_trace)
+    y_mesh        -= np.mean(y_trace)
+    x_trace       -= np.mean(x_trace)
+    y_trace       -= np.mean(y_trace)
+    fault_r.mesh[:, 0] = x_mesh
+    fault_r.mesh[:, 1] = y_mesh
+    fault_r.trace[:, 0] = x_trace
+    fault_r.trace[:, 1] = y_trace
+
+
+    # panels = [
+    #             dict(x=x_r, y=y_r, data=inputs[dataset_name].tree.data, label=panel_labels[0]),
+    #             dict(x=x_r, y=y_r, data=inputs[dataset_name].model,     label=panel_labels[1]),
+    #             dict(x=x_r, y=y_r, data=inputs[dataset_name].resids,    label=panel_labels[2]),
+    #             ]
+
+    # pyffit.figures.plot_fault_panels(panels, mesh_r, fault.triangles, fault.slip[:, 0], figsize=(12, 8), title=title, markersize=1,
+    #                                     orientation='vertical', fault_lim='map', vlim_slip=vlim_slip, vlim_disp=vlim_disp, xlim=xlim_r, 
+    #                                     ylim=ylim_r, dpi=dpi, show=False, filename=f'{run_dir}/Rotated_results_{filestem}') 
+
+
+    # -------------------- Plot rotated fault and model fit --------------------
     params      = []
     date        = datasets[dataset_name].date[-1]
     title       = f'Date: {date}'
-    orientation = 'horizontal'
-    fault_lim   = 'mesh'
+    orientation = 'vertical'
+    fault_lim   = 'map'
     show        = False
+    xlim        = [-25, 25]
+    ylim        = [-5, 5] 
+    figsize     = (8, 7.5)
+    markersize  = 5
 
     for run, results, s in zip(['Forward', 'Smoothed'], [results_forward, results_smoothing], [s_model_forward, s_model]):
         for k in range(len(x_model)):
@@ -565,12 +996,12 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
             slip_resid = s[k, :] - s_true[k, :]
 
             title       = f'[{run}] Date: {date}'
-            file_name   = f'{result_dir}/Results/{run}_{date}.png'
+            file_name   = f'{result_dir}/Results/Rotated_{run}_{date}.png'
 
             data_panels = [
-                        dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=d[k, :n_data],          label=dataset_name),
-                        dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results['model'][k, :], label='Model'),
-                        dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results['resid'][k, :], label=f"Residuals ({np.abs(results['resid'][k, :]).mean():.2f}"+ r'$\pm$' + f"{np.abs(results['resid'][k, :]).std():.2f})"),
+                        dict(x=x_r, y=y_r, data=d[k, :n_data],          label=dataset_name),
+                        dict(x=x_r, y=y_r, data=results['model'][k, :], label='Model'),
+                        dict(x=x_r, y=y_r, data=results['resid'][k, :], label=f"Residuals ({np.abs(results['resid'][k, :]).mean():.2f}"+ r'$\pm$' + f"{np.abs(results['resid'][k, :]).std():.2f})"),
                         ]
             
             fault_panels = [
@@ -578,7 +1009,7 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
                         # dict(slip=slip_resid, cmap=cmc.vik,   vlim=[-1, 1], title=f'Residuals ({np.abs(slip_resid).mean():.2f}'+ r'$\pm$' + f'{np.abs(slip_resid).std():.2f})',  label='Residuals (mm)'),
                         ]
             
-            params.append([data_panels, fault_panels, fault, figsize, title, markersize, orientation, fault_lim, vlim_slip, cmap_disp, vlim_disp, xlim, ylim, dpi, show, file_name])
+            params.append([data_panels, fault_panels, fault_r, figsize, title, markersize, orientation, fault_lim, vlim_slip, cmap_disp, vlim_disp, xlim, ylim, dpi, show, file_name])
 
             if k == len(x_model):
                 print(np.mean(np.abs(d[k, :n_data])), np.std(np.abs(d[k, :n_data])))
@@ -595,7 +1026,8 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
     del results
     gc.collect()
 
-    # 3D fault
+    
+    # -------------------- 3D fault --------------------
     params      = []
     edges       = True,     
     cbar_label  = 'Dextral slip (mm)'
@@ -653,7 +1085,6 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
         # plt.close()
 
 
-
     # Parallel
     os.environ["OMP_NUM_THREADS"] = "1"
     start       = time.time()
@@ -707,12 +1138,14 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     pyffit.utilities.check_dir_tree(result_dir + '/Matrices')
     pyffit.utilities.check_dir_tree(result_dir + '/Resolution')
     pyffit.utilities.check_dir_tree(downsampled_dir)
+    pyffit.utilities.check_dir_tree(downsampled_dir + '/' + dataset_name)
 
     # Copy parameter file and nif.py version to run directory
     shutil.copy(__file__, f'{run_dir}/Scripts/{date}/nif_{date}.py')
     shutil.copy(param_file, f'{run_dir}/Scripts/{date}/params_{date}.py')
     
     print(f'Run directory: {run_dir}')
+
 
     # -------------------------- Prepare original data --------------------------    
     # Load fault model and regularization matrices
@@ -731,7 +1164,7 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
                                              coord_type=coord_type, date_index_range=date_index_range, 
                                              check_lon=check_lon, reference_time_series=reference_time_series, 
                                              incremental=False, use_dates=use_dates, use_datetime=use_datetime, 
-                                             mask_file=mask_file)
+                                             mask_file=mask_file, remove_mean=False)
     datasets = {dataset_name: dataset}
     n_obs    = len(dataset.date)
     x        = dataset.coords['x'].compute().data.flatten()
@@ -750,6 +1183,9 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
         slip_model = np.full([n_patch, 3, n_obs], np.nan)
 
     # ------------------ Prepare inversion inputs ------------------
+    # Get parameter values to check
+    quadtree_dir = get_downsampled_data_directory(downsampled_dir + '/' + dataset_name, param_file)
+
     # Get dictionary of quadtree parameters
     quadtree_params = dict(
                             resolution_threshold=resolution_threshold,
@@ -763,15 +1199,26 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
                             edge_slip=edge_slip_samp,
                             disp_components=disp_components,
                             slip_components=slip_components,
-                            run_dir=run_dir,
+                            quadtree_dir=quadtree_dir,
                             )
 
     # Prepare inversion inputs
-    inputs = pyffit.inversion.get_inversion_inputs(fault, datasets, quadtree_params, date=-1, run_dir=run_dir, verbose=False)
+    inputs = pyffit.inversion.get_inversion_inputs(fault, datasets, quadtree_params, date=-1, quadtree_dir=quadtree_dir, verbose=False)
+    tree   = inputs[dataset_name].tree
     n_data = inputs[dataset_name].tree.x.size
-    # dt     = 12 # time step (days)
     dt    /= 365.25
 
+    # -------------------------- Prepare NIF objects --------------------------
+    print(f'Number of fault elements: {n_patch}')
+    print(f'Number of data points:    {n_data}')
+
+    # Prepare data
+    samp_file = f'cutoff={resolution_threshold:.1e}_wmin={width_min:.2f}_wmax={width_max:.2f}_max_int_w={max_intersect_width:.1f}_min_fdist={min_fault_dist:.2f}_max_it={max_iter:0f}'
+    d, std    = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{dataset_name}/{samp_file}.h5')
+
+    # Get Greens Functions
+    G = -fault.greens_functions(inputs[dataset_name].tree.x, inputs[dataset_name].tree.y, disp_components=disp_components, slip_components=slip_components, rotation=avg_strike, squeeze=True)
+    
     # Define covariance matrices
     # r = get_distances(inputs[dataset_name].tree.x, inputs[dataset_name].tree.y)
     # C = exponential_covariance(r, 1, 1, file_name=f'{run_dir}/exponential_covariance.png', show=False)
@@ -781,17 +1228,6 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     else:
         C = np.eye(inputs[dataset_name].tree.x.size)
 
-    # -------------------------- Prepare NIF objects --------------------------
-    print(f'Number of fault elements: {n_patch}')
-    print(f'Number of data points:    {n_data}')
-
-    # Prepare data
-    samp_file = f'cutoff={resolution_threshold:.1e}_wmin={width_min:.2f}_wmax={width_max:.2f}_max_int_w={max_intersect_width:.1f}_min_fdist={min_fault_dist:.2f}_max_it={max_iter:0f}'
-    d         = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{samp_file}.h5')
-
-    # Get Greens Functions
-    G = -fault.greens_functions(inputs[dataset_name].tree.x, inputs[dataset_name].tree.y, disp_components=disp_components, slip_components=slip_components, rotation=avg_strike, squeeze=True)
-    
     # Set up model bounds and initial uncertainties
     if steady_slip:
         state_lims   = [v_lim, W_lim, W_dot_lim]
@@ -1332,7 +1768,7 @@ def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigm
 
     # -------------------- Run NIF --------------------
     # # 1) Perform forward Kalman filtering
-    model, resid, rms = kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, steady_slip=steady_slip, constrain=constrain, state_lim=state_lim, cost_function=cost_function, file_name=f'{result_dir}/results_forward.h5')
+    model, resid, rms = kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir=result_dir, steady_slip=steady_slip, constrain=constrain, state_lim=state_lim, cost_function=cost_function, file_name=f'{result_dir}/results_forward.h5')
     # write_kalman_filter_results(model, resid, rms, x_f=x_f, x_a=x_a, P_f=P_f, P_a=P_a, backward_smoothing=False, file_name=f'{result_dir}/results_forward.h5')
     # results_forward = read_kalman_filter_results(f'{result_dir}/results_forward.h5')
 
@@ -1371,7 +1807,8 @@ def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigm
     return x_model_forward, x_model_smoothing
 
 
-def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], steady_slip=False, constrain=False, cost_function='state', backward_smoothing=False, overwrite=True, file_name='results_forward.h5'):
+def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir='.', state_lim=[], steady_slip=False, constrain=False, cost_function='state', 
+                  backward_smoothing=False, rcond=1e-8, overwrite=True, file_name='results_forward.h5'):
     """
     INPUT:
     x_init (n_dim,)     - intial state (n_dim - # of model parameters) 
@@ -1453,7 +1890,7 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], steady_sli
         HPfH_R = HPfH + R
 
         start_pinv = time.time()
-        HPfHT_inv = np.linalg.pinv(HPfH_R, hermitian=True)
+        HPfHT_inv = np.linalg.pinv(HPfH_R, hermitian=True, rcond=rcond)
         end_pinv = time.time() - start_pinv
         print(f'HPfHT_inv time: {end_pinv:.2f} s')
 
@@ -1464,9 +1901,30 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], steady_sli
         start_analysis = time.time()
         x_a[k, :]      = x_f[k, :] + K @ (d[k, :] - H @ x_f[k, :])
         P_a[k, :, :]   = P_f[k, :, :] - K @ H @ P_f[k, :, :]
+
+        print()
+        print(f'P_f:       {np.abs(P_f[k, :, :]).min():.2f} {np.abs(P_f[k, :, :]).max():.2f}')
+        print(f'H:         {np.abs(H).min():.2f} {np.abs(H).max():.2f}')
+        print(f'HPfHT_inv: {np.abs(HPfHT_inv).min():.2f} {np.abs(HPfHT_inv).max():.2f}')
+        print(f'K:         {np.abs(K).min():.2f} {np.abs(K).max():.2f}')
+        print()
+
         end_analysis   = time.time() - start_analysis
         print(f'Analysis time: {end_forecast:.2f} s')
-                                    
+    
+        start_plot = time.time()
+        vlim = np.max(abs(P_a[k, :, :]))
+        fig, axes = plt.subplots(1, 2, figsize=(6, 3))
+        im = axes[0].imshow(P_f[k, :, :], vmin=-vlim, vmax=vlim, cmap=cmc.vik, interpolation='none')
+        im = axes[1].imshow(P_a[k, :, :], vmin=-vlim, vmax=vlim, cmap=cmc.vik, interpolation='none')
+        axes[0].set_title(r'$P_f$')
+        axes[1].set_title(r'$P_a$')
+        fig.colorbar(im)
+        plt.savefig(f'{result_dir}/Results/Matrices/P_{k}.png', dpi=200)
+        plt.close()
+        end_plot = time.time() - start_plot
+        print(f'Ploting time: {end_plot:.2f}')
+
         # Constrain state estimate 
         start_opt = time.time()
         print(f'State range: {x_a[k, :].min():.2f} - {x_a[k, :].max():.2f}')
@@ -1542,7 +2000,7 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], steady_sli
 
                 # # Perform minimization
                 if constrain:
-                    results = minimize(cost_function, x_0, bounds=state_lim, method='COBYLA', constraints=constraints, tol=1e-6)
+                    results = minimize(cost_function, x_0, bounds=state_lim, method='COBYLA', constraints=constraints, tol=1e-8)
                     end_opt = time.time() - start_opt
 
                     x_a[k, :] = results.x
@@ -1628,7 +2086,7 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, state_lim=[], steady_sli
     return model, resid, rms
 
 
-def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, constrain=False, state_lim=[], cost_function='state'):
+def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, constrain=False, state_lim=[], cost_function='state', rcond=1e-15,):
     """
     Dimensions:
     n_obs  - # of time points
@@ -1677,7 +2135,7 @@ def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, constrain
         print(f'\n##### Working on Step {k} #####')
         
         # Compute smoothing matrix S
-        P_f_inv = np.linalg.pinv(file['P_f'][k + 1, :, :], hermitian=True)
+        P_f_inv = np.linalg.pinv(file['P_f'][k + 1, :, :], hermitian=True, rcond=rcond)
         S[k, :, :] = file['P_a'][k, :, :] @ T.T @ P_f_inv
 
         # Get smoothed states and covariances
@@ -1766,7 +2224,7 @@ def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, constrain
                 end_opt = 0
 
     for k in range(n_obs):
-        H = make_observation_matrix(G, L, t=dt*k)
+        H = make_observation_matrix(G, L, t=dt*k, steady_slip=steady_slip)
 
         # Compute error terms
         pred        = H @ x_s[k, :]
@@ -2317,6 +2775,73 @@ def convert_timedelta(td, unit='Y'):
     return dt
 
 
+def load_site_table(site_file, ref_point, EPSG='32611', unit='km'):
+    """
+    Load table of site coordinates (lon, lat, name) to make time series plots for.
+    """
+    
+    sites = pd.read_csv(site_file, header=0, delim_whitespace=True)
+    sites['x'], sites['y'] = pyffit.utilities.get_local_xy_coords(sites['lon'], sites['lat'], ref_point, EPSG=EPSG, unit=unit) 
+    
+    return sites
+    
+
+def check_parameters(new_params, old_params, verbose=False):
+    """
+    Check if parameter file has specified values
+    """
+
+    for key in new_params.keys():
+        old_value = old_params[key]
+
+        if old_value == new_params[key]:
+            continue
+        else:
+            if verbose:
+                print(f'Conflict with {key}: {old_value} {new_params[key]}')
+            return False
+
+    return True
+
+
+def get_downsampled_data_directory(base_dir, param_file):
+    """
+    Get directory for downsampled time series.
+    """
+    
+    # Load current parameter file
+    params = load_parameters(param_file)[1]
+
+    # Extract parameters relevant to downsampling
+    check_keys   = ['mesh_file', 'triangle_file', 'data_dir', 'file_format', 'ref_point', 'resolution_threshold', 'width_min', 'width_max', 'max_intersect_width', 'min_fault_dist', 'max_iter', 'smoothing_samp', 'edge_slip_samp',]
+    check_params = dict((key, params[key]) for key in check_keys)
+
+    # Get list of existing parameter files
+    param_files = glob.glob(f'{base_dir}/*/params_*.py')
+
+    # Check parameter files
+    for file in param_files:
+        # Load parameters
+        old_params = load_parameters(file)[1]
+
+        # Check against specified values
+        confirm = check_parameters(check_params, old_params)
+        
+        if confirm:
+            downsampled_data_dir = '/'.join(file.split('/')[:-1])
+            print(f'Using existing dataset at {downsampled_data_dir}')
+            
+            return downsampled_data_dir
+        
+    # If no match is found, make new directory
+    date = datetime.datetime.today().strftime('%Y%m%d_%H%M%S')
+    downsampled_data_dir = base_dir + '/' + date
+    pyffit.utilities.check_dir_tree(downsampled_data_dir)
+    shutil.copy(param_file, f'{downsampled_data_dir}/params_{date}.py')
+    print(f'Creating new dataset at {downsampled_data_dir}')
+
+    return downsampled_data_dir
+       
 # ------------------ Plotting ------------------
 def make_fault_movie():
     # -------------------------- testing --------------------------
@@ -2511,6 +3036,7 @@ def fault_panel_wrapper(params):
                                         xlim=xlim, ylim=ylim, dpi=dpi, show=show, file_name=file_name) 
     print(file_name)
     return
+
 
 def fault_3d_wrapper(params):
 
