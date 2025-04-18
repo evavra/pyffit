@@ -21,7 +21,7 @@ class TriFault:
     """
 
     def __init__(self, mesh_file, triangle_file, slip=[], slip_components=[0, 1, 2], poisson_ratio=0.25, shear_modulus=30e9, mu=0, eta=0, reg_matrix_dir='.', 
-                 verbose=False, trace_inc=0.01, N_data=True):
+                 verbose=False, trace_inc=0.01, N_data=True, avg_strike=np.nan, ref_point=[]):
         """
         Instantiate TriFault object
         """
@@ -31,6 +31,7 @@ class TriFault:
         self.triangles    = np.loadtxt(triangle_file, delimiter=',', dtype=int) # CONFIRM MESH USES PYTHON INDEXING
         self.patches      = self.mesh[self.triangles]
         self.trace        = self.mesh[self.mesh[:, 2] == 0][:, :2]
+        self.avg_strike   = avg_strike
 
         # Physical parameters
         self.slip_components = slip_components
@@ -85,7 +86,20 @@ class TriFault:
         
         self.smoothing_matrix = R
         self.edge_slip_matrix = E
-
+        
+        # Get strike-oriented coordinate system
+        if (len(ref_point) == 2) & (not np.isnan(avg_strike)):
+            # Rotate data so fault is horizontal
+            # fault_r        = copy.deepcopy(fault)
+            x_mesh, y_mesh   = rotate(self.mesh[:, 0], self.mesh[:, 1], np.deg2rad(avg_strike + 90))
+            x_trace, y_trace = rotate(self.trace[:, 0], self.trace[:, 1], np.deg2rad(avg_strike + 90))
+            self.origin_r    = [np.mean(x_trace), np.mean(y_trace)]
+            x_mesh          -= self.origin_r[0]
+            y_mesh          -= self.origin_r[1]
+            x_trace         -= self.origin_r[0]
+            y_trace         -= self.origin_r[1]
+            self.mesh_r      = np.array([x_mesh, y_mesh]).T
+            self.trace_r     = np.array([x_trace, y_trace]).T
 
     def greens_functions(self, x, y, z=[], look=[], disp_components=[0, 1, 2], slip_components=[0, 1, 2], rotation=np.nan, squeeze=True):
         """
