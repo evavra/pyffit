@@ -8,6 +8,7 @@ import matplotlib.pyplot as plt
 # import cartopy.feature as cfeature
 from pyffit.data import read_grd
 from pyffit.utilities import check_dir_tree
+from pyffit.figures import plot_rotated_fault
 from pyffit.finite_fault import get_fault_greens_functions, proj_greens_functions
 import pickle
 import sys
@@ -68,7 +69,7 @@ class ResQuadTree:
 
     def __init__(self, x, y, data, look, data_index, fault, data_extent=[], mu=1, eta=1, width_min=0.1, width_max=5, smoothing=True, edge_slip=True,
                     iter=0, max_iter=100, resolution_threshold=0.02, max_intersect_width=0.5, min_fault_dist=0, poisson_ratio=0.25, verbose=False, 
-                    disp_components=[0, 1, 2], slip_components=[0, 1, 2], rotation=np.nan, plot=True, run_dir='.'):
+                    disp_components=[0, 1, 2], slip_components=[0, 1, 2], rotation=np.nan, plot=True, quadtree_dir='.'):
 
         # Save parameter values
         self.mu                   = fault.mu
@@ -83,7 +84,7 @@ class ResQuadTree:
         self.slip_components      = slip_components
         self.rotation             = rotation
         self.min_fault_dist       = min_fault_dist
-        self.run_dir              = run_dir
+        self.quadtree_dir         = quadtree_dir
         self.smoothing            = smoothing
         self.edge_slip            = edge_slip
 
@@ -93,28 +94,49 @@ class ResQuadTree:
         # Get cells
         cells = resolution_sampling(x, y, data, look, data_index, fault, data_extent=self.extent, width_min=width_min, width_max=width_max, smoothing=smoothing, edge_slip=edge_slip,
                                          iter=iter, max_iter=max_iter, resolution_threshold=resolution_threshold, max_intersect_width=max_intersect_width, 
-                                         disp_components=disp_components, slip_components=slip_components, rotation=rotation, plot=plot, min_fault_dist=min_fault_dist, run_dir=run_dir)
+                                         disp_components=disp_components, slip_components=slip_components, rotation=rotation, min_fault_dist=min_fault_dist,)
         self.compute_values(cells)
 
         n_points = self.x.size
 
         # Plot
         if plot:
-            vlim = np.mean(np.abs(self.data)) + 2*np.std(np.abs(self.data))
+            vmax = np.mean(np.abs(self.data)) + np.std(np.abs(self.data))
+            vlim = [-vmax, vmax]
+            label = 'Displacement (mm)'
+            title = f'Iteration {iter}: {n_points} points'
 
+            # Plot map
             fig, ax = plt.subplots(figsize=(6, 6))
             ax.scatter(x[~np.isnan(data)], y[~np.isnan(data)], marker='.', s=1, c='lightgray')
             ax.plot(fault.trace[:, 0], fault.trace[:, 1], c='k', linewidth=1)
-            im = ax.scatter(self.x, self.y, marker='.', s=10, c=self.data, vmin=-vlim, vmax=vlim, cmap=cmc.vik)
+            im = ax.scatter(self.x, self.y, marker='.', s=10, c=self.data, vmin=vlim[0], vmax=vlim[1], cmap=cmc.vik)
             # im = ax.scatter(self.x[cell_buffer], y_origin[cell_buffer], c='gold', marker='o')
             # im = ax.scatter(self.x[cell_intersections], y_origin[cell_intersections], c='C3', marker='o')
             ax.set_aspect(1)
-            ax.set_title(f'Iteration {iter}: {n_points} points')
+            ax.set_title(title)
             
-            plt.colorbar(im)
-            plt.savefig(f'{run_dir}/quadtree.png', dpi=300)
+            plt.colorbar(im, label=label)
+            plt.savefig(f'{quadtree_dir}/map.png', dpi=300)
             plt.close()
         
+            # Plot rotated downsampled data
+            s = 5
+            plot_rotated_fault(fault, self.x, self.y, self.data, vlim=vlim, cmap=cmc.vik, label=label, s=s, title=title, file_name=f'{quadtree_dir}/rotated_quadtree.png')
+
+            # Plot rotated raw data
+            s = 1
+            plot_rotated_fault(fault, x[~np.isnan(data)], y[~np.isnan(data)], data[~np.isnan(data)], vlim=vlim, cmap=cmc.vik, label=label, s=s, title=title, file_name=f'{quadtree_dir}/rotated_raw.png')
+
+
+            # Plot rotated STD
+            vlim  = [0, 10]
+            label = 'Standard deviation (mm)'
+            s     = 5
+
+            plot_rotated_fault(fault, self.x, self.y, self.std,  vlim=vlim, cmap=cmc.lajolla, label=label, s=s, title=title, file_name=f'{quadtree_dir}/rotated_std.png')
+    
+            
     def compute_values(self, cells):
 
         self.cells = cells
@@ -134,6 +156,8 @@ class ResQuadTree:
         self.real_count = np.empty(len(self.cells))  
         self.nan_count  = np.empty(len(self.cells))  
         self.nan_frac   = np.empty(len(self.cells))  
+        self.side       = np.empty(len(self.cells))  
+        self.intersects = np.empty(len(self.cells))  
 
         for i in range(len(self.cells)):
             cell = self.cells[i]
@@ -146,9 +170,9 @@ class ResQuadTree:
             self.real_count[i] = np.sum(~np.isnan(cell.data.values))
             self.nan_count[i]  = self.count[i] - self.real_count[i]
             self.nan_frac[i]   = self.nan_count[i]/self.count[i]
+            self.side[i]       = cell.side
+            self.intersects[i] = cell.intersects
             self.look[i, :]    = cell.look
-
-        # print(np.mean(self.data), np.std(self.data))
 
 
     def write(self, filename):
@@ -184,7 +208,7 @@ class ResQuadTree:
 
     def check_parameters(self, params):
         """
-        Check if  ResQuadTree has specified parameter values
+        Check if ResQuadTree has specified parameter values
         """
 
         for key in params.keys():
@@ -229,6 +253,8 @@ class CellData:
         self.y      = y
         self.values = data
         self.index  = index
+        self.side   = []
+        self.sign   = []
 
 
 class CellOrigin:
@@ -254,7 +280,7 @@ class Cell:
     nan_frac (k,) - fraction of nan values in each cell.
     """
 
-    def __init__(self, x, y, data, look, index, origin, extent, cell_slice, trace):
+    def __init__(self, x, y, data, look, index, origin, extent, cell_slice, trace, sign=0, side=[], intersects=False):
         self.x          = x  
         self.y          = y  
         self.data       = CellData(x, y, data, index)  
@@ -264,31 +290,41 @@ class Cell:
         self.width      = np.max([extent[1] - extent[0], extent[3] - extent[2]])
         self.look       = np.mean(look, axis=0)
 
-        # Check if cell intersects with fault
-        i_intersect = np.where((trace[:, 0] >= self.extent[0]) & (trace[:, 0] <= self.extent[1]) & (trace[:, 1] >= self.extent[2]) & (trace[:, 1] <= self.extent[3]))[0]
-        
-        # Compute minimum distance to fault
-        # dist = np.empty((2, 2))
-
-        # for i in range(2):
-        #     for j in range(2):
-        #         dist[i, j] = np.min(np.sqrt((trace[:, 0] - self.extent[i])**2 + (trace[:, 1] - self.extent[j + 2])**2))
-
-        # self.min_fault_dist = np.min(dist)
-        self.min_fault_dist = get_min_fault_dist(trace, self.extent)
-
-        # Get nan count
-        if len(i_intersect) < 2:
-            # No intersection, proceed as usual
-            self.value    = np.nanmean(self.data.values)  
-            self.std      = np.nanstd(self.data.values)  
-            self.nan_frac = np.sum(np.isnan(self.data.values)/self.data.values.size)
-            self.intersects = False
-
-        else:
-            # Select trace segment within cell
-            trace_seg = trace[i_intersect]
+        # If generating for the first time, determine intersection status
+        if (sign == 0) & (len(side) != data.size):
+            # Check if cell intersects with fault
+            i_intersect = np.where((trace[:, 0] >= self.extent[0]) & (trace[:, 0] <= self.extent[1]) & (trace[:, 1] >= self.extent[2]) & (trace[:, 1] <= self.extent[3]))[0]
             
+            # Compute minimum distance to fault
+            self.min_fault_dist = get_min_fault_dist(trace, self.extent)
+
+            # Get side of fault, handle intersections, and compute cell values
+            # a) No intersections
+            if len(i_intersect) == 0: 
+                origin_dist = np.sqrt((trace[:, 0] - self.origin.x)**2 + (trace[:, 1] - self.origin.y)**2)
+
+                # # Get nearest fault segment
+                i_nearest = np.where(origin_dist == origin_dist.min())[0][0]
+                
+                if i_nearest == 0:
+                    trace_seg = trace[:2, :]
+                elif i_nearest == (len(trace) - 1):
+                    trace_seg = trace[-2:, :]
+                else:
+                    trace_seg = trace[i_nearest - 1:i_nearest +1, :]
+                self.intersects = False
+
+            # b) One node intersects
+            elif len(i_intersect) == 1: # Once node intersects
+                trace_seg = trace[i_intersect[0] - 1:i_intersect[0] + 1, :]
+                self.intersects = True
+
+            # c) Multiple nodes intersect
+            else:
+                # Select trace segment within cell
+                trace_seg = trace[i_intersect]
+                self.intersects = True
+                
             # Check which side the data are on
             side = np.zeros_like(self.data.values)
 
@@ -304,21 +340,17 @@ class Cell:
                 sign = 1
                 label = 'East'
 
-            # Compute values using majority side
-            self.value      = np.nanmean(self.data.values[side == sign])  
-            self.std        = np.nanstd(self.data.values[side == sign])  
-            self.nan_frac   = np.sum(np.isnan(self.data.values[side == sign])/self.data.values[side == sign].size)
-            self.intersects = True
+        # Use intersection value
+        else:
+            self.intersects = intersects
 
-            # # Plot
-            # fig, ax = plt.subplots(figsize=(14, 8.2))
-            # fig.suptitle(label)
-            # ax.scatter(self.data.x, self.data.y, c=side, cmap='coolwarm')
-            # # ax.scatter(self.data.x, self.data.y, c=self.data.values, cmap='coolwarm')
-            # # ax.plot(trace[:, 0], trace[:, 1], c='lightgray')
-            # ax.plot(trace_seg[:, 0], trace_seg[:, 1], c='k')
-            # plt.show()
-            # sys.exit(1)
+        # Compute values using majority side
+        self.side       = sign
+        self.data.side  = side
+        self.value      = np.nanmean(self.data.values[side == sign])  
+        self.std        = np.nanstd(self.data.values[side == sign])  
+        self.nan_frac   = np.sum(np.isnan(self.data.values[side == sign])/self.data.values[side == sign].size)
+
 
 @jit(nopython=True)
 def get_min_fault_dist(trace, extent):
@@ -339,20 +371,19 @@ def get_downsampled_time_series(datasets, inversion_inputs, fault, n_dim, datase
     # Load downsampled time series matrix if already exists
     if os.path.exists(file_name):
         print('\n##### Loading time series #####')
-        # with open(file_name, 'rb') as f:
-        #     d = pickle.load(f)
-
         with h5py.File(file_name, 'r') as file:
-            d = file['d'][()]
+            d   = file['d'][()]
+            std = file['std'][()]
 
     # Apply existing quadtree to time-series
     else:
         print('\n##### Downsampling time series #####')
         d    = np.zeros((datasets[dataset_name].date.size, inversion_inputs[dataset_name].tree.data.size + n_dim), dtype=float)
+        std  = np.zeros((datasets[dataset_name].date.size, inversion_inputs[dataset_name].tree.data.size), dtype=float)
         look = np.array([datasets[dataset_name]['look_e'].compute().data.flatten(), 
                          datasets[dataset_name]['look_n'].compute().data.flatten(), 
                          datasets[dataset_name]['look_u'].compute().data.flatten()]).T
-        
+
         start = time.time()
         n_date = len(datasets[dataset_name].date)
 
@@ -365,35 +396,33 @@ def get_downsampled_time_series(datasets, inversion_inputs, fault, n_dim, datase
             data = datasets[dataset_name]['z'].isel(date=k).compute().data
 
             # Redo cells
-            update_start = time.time()
-            
             cells = update_cells(inversion_inputs[dataset_name].tree.cells, datasets[dataset_name].coords['x'].compute().data.flatten(), datasets[dataset_name].coords['y'].compute().data.flatten(), 
                                  data.flatten(), np.arange(0, datasets[dataset_name].coords['x'].size), look, fault.trace_interp)
-            update_end = time.time() - update_start
 
             # Update quadtree
             inversion_inputs[dataset_name].tree.compute_values(cells)
             d[k, :inversion_inputs[dataset_name].tree.data.size] = inversion_inputs[dataset_name].tree.data
+            std[k, :] = inversion_inputs[dataset_name].tree.std
+
             end_date = time.time() - start_date
             print(f'{date} ({k + 1}/{n_date}) completed in {end_date:.1f} s')
 
+        # Save data to disk
         print('\n' + f'Saving time series matrix d to {file_name}')
-
-        # with open(file_name, 'wb') as f:
-        #     pickle.dump(d, f)
 
         with h5py.File(file_name, 'w') as file:
             file.create_dataset('d', data=d)
+            file.create_dataset('std', data=std)
 
         end = time.time() - start
         print(f'Data computation time: {end:.1f} s')
-    return d
+
+    return d, std
 
 
 # ------------------ Resolution quadtree methods ------------------
 def resolution_sampling(x, y, data, look, data_index, fault, min_fault_dist=0, data_extent=[], width_min=0.1, width_max=5, iter=0, max_iter=100, resolution_threshold=0.02, 
-                        max_intersect_width=0.5, smoothing=True, edge_slip=True, disp_components=[0, 1, 2], slip_components=[0, 1, 2], rotation=np.nan, plot=True, run_dir='.',
-                    #  real_min=3, mu=1, eta=1, poisson_ratio=0.25, verbose=False,
+                        max_intersect_width=0.5, smoothing=True, edge_slip=True, disp_components=[0, 1, 2], slip_components=[0, 1, 2], rotation=np.nan,
                      ):
     """
     Perform resolution-based downsampling, based on the procedure described by Lohman & Simons (2005).
@@ -607,26 +636,7 @@ def get_cells_grid(x, y, data, data_index, look, x_edge, y_edge, x_origin, y_ori
     return cells
 
 
-# def update_cell(params):
-#     """
-#     Get cell (origin, extent) for given data with coordinates (x, y)
-#     """
-#     origin, extent, x, y, data, data_index, look, trace = params
-
-#     # Get index slices for cells            
-#     cell_slice = np.where((x >= extent[0]) & (x <= extent[1]) & (y >= extent[2]) & (y <= extent[3]))[0]
-
-#     # Get information for each new cell
-#     cell_x     = x[cell_slice]
-#     cell_y     = y[cell_slice]
-#     cell_data  = data[cell_slice]
-#     cell_index = data_index[cell_slice]
-#     cell_look  = look[cell_slice, :]
-    
-#     return Cell(cell_x, cell_y, cell_data, cell_look, cell_index, (origin.x, origin.y), extent, cell_slice, trace)
-
-
-def update_cells(cells, x, y, data, data_index, look, trace):
+def update_cells(cells, x, y, data, data_index, look, trace, cell_slice=[]):
     """
     Populate existing cells with new data.
     """
@@ -634,21 +644,26 @@ def update_cells(cells, x, y, data, data_index, look, trace):
     new_cells = []
     params    = []
 
+    where_time = 0
+    slice_time = 0
+    cell_time  = 0
+
     for i in range(len(cells)):
         cell = cells[i]
 
         # Get index slices for cells          
-        cell_slice = np.where((x >= cell.extent[0]) & (x <= cell.extent[1]) & (y >= cell.extent[2]) & (y <= cell.extent[3]))[0]
-
+        # cell_slice = np.where((x >= cell.extent[0]) & (x <= cell.extent[1]) & (y >= cell.extent[2]) & (y <= cell.extent[3]))[0]
+        cell_slice = cell.cell_slice
+        
         # Get information for each new cell
         cell_x     = x[cell_slice]
         cell_y     = y[cell_slice]
         cell_data  = data[cell_slice]
         cell_index = data_index[cell_slice]
         cell_look  = look[cell_slice, :]
+
+        new_cells.append(Cell(cell_x, cell_y, cell_data, cell_look, cell_index, (cell.origin.x, cell.origin.y), cell.extent, cell_slice, trace, sign=cell.side, side=cell.data.side, intersects=cell.intersects))
         
-        # # x, y, data, std, index, origin, extent
-        new_cells.append(Cell(cell_x, cell_y, cell_data, cell_look, cell_index, (cell.origin.x, cell.origin.y), cell.extent, cell_slice, trace))
         # params.append([cell.origin, cell.extent, x, y, data, data_index, look, trace])
 
     # os.environ["OMP_NUM_THREADS"] = "1"
