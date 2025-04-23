@@ -334,6 +334,7 @@ def analyze_disp(mesh_file, triangle_file, data_dir, file_format, run_dir, samp_
     dt = params['dt']
     vlim_disp = params['vlim_disp']
     avg_strike = params['avg_strike']
+    param_file = params['param_file']
 
 
     # -------------------------- Prepare original data -------------------------- =       
@@ -366,6 +367,12 @@ def analyze_disp(mesh_file, triangle_file, data_dir, file_format, run_dir, samp_
     y_grid   = dataset.coords['y'].compute().data
 
     # ------------------ Prepare data and model ------------------
+    # Get directory for downsampled data
+    pyffit.utilities.check_dir_tree(downsampled_dir + '/' + dataset_name)
+        
+    # Get parameter values to check
+    quadtree_dir = get_downsampled_data_directory(downsampled_dir + '/' + dataset_name, param_file)
+
     # Get dictionary of quadtree parameters
     quadtree_params = dict(
                             resolution_threshold=resolution_threshold,
@@ -379,18 +386,18 @@ def analyze_disp(mesh_file, triangle_file, data_dir, file_format, run_dir, samp_
                             edge_slip=edge_slip_samp,
                             disp_components=disp_components,
                             slip_components=slip_components,
-                            run_dir=run_dir,
+                            quadtree_dir=quadtree_dir,
                             )
 
     # Prepare inversion inputs
-    inputs = pyffit.inversion.get_inversion_inputs(fault, datasets, quadtree_params, date=-1, run_dir=run_dir, verbose=False)
+    inputs = pyffit.inversion.get_inversion_inputs(fault, datasets, quadtree_params, date=-1, quadtree_dir=quadtree_dir, verbose=False)
     n_data = inputs[dataset_name].tree.x.size
     tree = inputs[dataset_name].tree
     dt    /= 365.25
 
     # Prepare downsampled data
     samp_file = f'cutoff={resolution_threshold:.1e}_wmin={width_min:.2f}_wmax={width_max:.2f}_max_int_w={max_intersect_width:.1f}_min_fdist={min_fault_dist:.2f}_max_it={max_iter:0f}'
-    d, std    = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{samp_file}.h5')
+    d, std    = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{dataset_name}/{samp_file}.h5')
     
     # Load slip model
     with h5py.File(f'{run_dir}/results_smoothing.h5', 'r') as file:
@@ -471,8 +478,6 @@ def analyze_disp(mesh_file, triangle_file, data_dir, file_format, run_dir, samp_
         
         fig.savefig(file_name, dpi=300)
     
-
-    return
 
     # ------------------ Analyze site time series ------------------
 
@@ -629,7 +634,7 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
 
     run_dir    = f'{out_dir}/omega_{omega:.1e}__kappa_{kappa:.1e}__sigma_{sigma:.1e}'
     result_dir = f'{run_dir}/Results'
- # Get directory for downsampled data
+    # Get directory for downsampled data
     pyffit.utilities.check_dir_tree(downsampled_dir + '/' + dataset_name)
         
     # Get parameter values to check
@@ -2211,7 +2216,8 @@ def sqrt_update(H, R, y, x_f, P_f, get_S_c=False):
     
     else:
         return x_a, P_a, z
-    
+
+
 def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, constrain=False, state_lim=[], cost_function='state', rcond=1e-15,):
     """
     Dimensions:
@@ -2968,9 +2974,6 @@ def get_downsampled_data_directory(base_dir, param_file):
 
     return downsampled_data_dir
        
-
-
-
 
 # ------------------ Plotting ------------------
 def make_fault_movie():
