@@ -16,7 +16,8 @@ import cmcrameri.cm as cmc
 # mode = ['analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
 # mode = ['NIF', 'analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
 # mode = ['downsample'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
-mode = ['NIF', 'analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
+# mode = ['NIF', 'analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
+mode = ['analyze_disp'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
 
 # Files and directories
 # mesh_file           = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/Mesh/Geometry/mesh_points_simple.txt'
@@ -88,8 +89,8 @@ smoothing_samp       = False
 edge_slip_samp       = False
 
 # NIF parameters
-omega           = 1e2   # temporal smoothing hyperparameter
-kappa           = 5e0   # spatial smoothing hyperparameter
+omega           = 1e3   # temporal smoothing hyperparameter
+kappa           = 1e0   # spatial smoothing hyperparameter
 sigma           = 1e0   # data covariance scaling hyperparameter (Note: for single dataset, and single kappa value for steady-state velocity, transient slip, and transient velocity, sigma becomes reduntant)
 # kappa           = 1e2   # spatial smoothing hyperparameter
 mu              = kappa # spatial smoothing hyperparameter
