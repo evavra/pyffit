@@ -343,7 +343,7 @@ def analyze_disp(mesh_file, triangle_file, data_dir, file_format, run_dir, samp_
                                          poisson_ratio=poisson_ratio, shear_modulus=shear_modulus, 
                                          verbose=False, trace_inc=trace_inc, mu=mu, eta=eta,
                                          avg_strike=avg_strike, ref_point=ref_point)
-    
+
 
     n_patch = len(fault.triangles)
     slip_start = steady_slip * n_patch  # Get start of transient slip
@@ -406,6 +406,25 @@ def analyze_disp(mesh_file, triangle_file, data_dir, file_format, run_dir, samp_
         resid      = file['resid'][()]
         rms        = file['rms'][()]
     
+
+    # Fit ramps
+    pyffit.utilities.check_dir_tree(f'{run_dir}/Ramp')
+
+    for k in range(len(resid)):
+        print(f'Working on {k}...')
+        for deg in [1, 2]:
+
+            ramp = pyffit.corrections.fit_ramp(tree.x, tree.y, resid[k, :], deg=deg)
+            vlim = np.max(np.abs(ramp))
+            
+            fig, ax = plt.subplots(figsize=(14, 8.2))
+            im = ax.scatter(tree.x, tree.y, c=ramp, cmap=cmc.vik, vmin=-vlim, vmax=vlim)
+            ax.set_title(f'Range: {ramp.max() - ramp.min():.1f} mm')
+            ax.set_aspect(1)
+            plt.colorbar(im, label='Displacement (mm)')
+            plt.savefig(f'{run_dir}/Ramp/deg_{deg}_ramp_{k}.png')
+            plt.close()
+    return
     # Load sites to extract time series
     sites = load_site_table(site_file, ref_point)
 
@@ -608,6 +627,8 @@ def analyze_disp(mesh_file, triangle_file, data_dir, file_format, run_dir, samp_
     #     s_model = x_model[:, :n_patch]
 
     # s_true = slip_model[:, 0, :].T
+
+    print(run_dir)
     return
 
 
@@ -1126,16 +1147,14 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
             date_index_range=[-22, -14], xkey='x', coord_type='xy', dataset_name='data',
             check_lon=False, reference_time_series=True, use_dates=False, use_datetime=False, dt=1, data_factor=1,
             model_file='', mask_file='', estimate_covariance=False, mask_dists=[3], n_samp=2*10**7, r_inc=0.2, r_max=80, mask_dir='.', cov_dir='.', 
-            m0=[0.9, 1.5, 5], c_max=2, sv_max=2, ref_point=[-116, 33.5], avg_strike=315.8, trace_inc=0.01, poisson_ratio=0.25, 
+            m0=[0.9, 1.5, 5], c_max=2, sv_max=2, ramp_type='none', ref_point=[-116, 33.5], avg_strike=315.8, trace_inc=0.01, poisson_ratio=0.25, 
             shear_modulus=6*10**9, disp_components=[1], slip_components=[0], resolution_threshold=2.3e-1, 
             width_min=0.1, width_max=10, max_intersect_width=100, min_fault_dist=1, max_iter=10, 
             smoothing_samp=False, edge_slip_samp=False, omega=1e1, sigma=1e1, kappa=2e1, mu=2e1, 
-            eta=2e1, steady_slip=False, constrain=False, v_sigma=1e-9, W_sigma=1,  W_dot_sigma=1, v_lim=(0,3), W_lim=(0,30), W_dot_lim=(0,50), 
+            eta=2e1, rho=1e0, steady_slip=False, constrain=False, v_sigma=1e-9, W_sigma=1,  W_dot_sigma=1, ramp_sigma=100, v_lim=(0, 3), W_lim=(0, 30), W_dot_lim=(0, 50), ramp_lim=(-100, 100),
             xlim=[-35.77475071,26.75029172], ylim=[-26.75029172, 55.08597388], vlim_slip=[0, 20], 
             vlim_disp=[[-10,10], [-10,10], [-1,1]], cmap_slip=cmc.lajolla, cmap_disp=cmc.vik, figsize=(10, 10), dpi=75, markersize=40, 
             param_file='params.py'
-            # look_dir, asc_velo_model_file, des_velo_model_file, ykey='y', EPSG='32611', 
-            # data_region=[-116.4, -115.7, 33.25, 34.0], smoothing_inv=True, edge_slip_inv=False,
             ):
     """
     Run network inversion filter.
@@ -1173,10 +1192,11 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
                                          avg_strike=avg_strike, ref_point=ref_point)
     n_patch = len(fault.triangles)
 
+    # Get number of fault parameters (i.e. excluding ramp)
     if steady_slip:
-        n_dim   = 3 * n_patch
+        n_fault_dim   = 3 * n_patch
     else:
-        n_dim   = 2 * n_patch
+        n_fault_dim   = 2 * n_patch
 
     # Load data
     dataset = pyffit.data.load_insar_dataset(data_dir, file_format, dataset_name, ref_point, data_factor=data_factor, xkey=xkey, 
@@ -1188,7 +1208,6 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     n_obs    = len(dataset.date)
     x        = dataset.coords['x'].compute().data.flatten()
     y        = dataset.coords['y'].compute().data.flatten()
-    # dt = convert_timedelta(dataset.date[1] - dataset.date[0], unit='D')
 
     # Load original slip model
     if len(model_file) > 0:
@@ -1233,15 +1252,18 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
 
     # Prepare data
     samp_file = f'cutoff={resolution_threshold:.1e}_wmin={width_min:.2f}_wmax={width_max:.2f}_max_int_w={max_intersect_width:.1f}_min_fdist={min_fault_dist:.2f}_max_it={max_iter:0f}'
-    d, std    = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{dataset_name}/{samp_file}.h5')
+    d, std    = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_fault_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{dataset_name}/{samp_file}.h5')
 
     # Get Greens Functions
     G = -fault.greens_functions(inputs[dataset_name].tree.x, inputs[dataset_name].tree.y, disp_components=disp_components, slip_components=slip_components, rotation=avg_strike, squeeze=True)
     
-    # Define covariance matrices
-    # r = get_distances(inputs[dataset_name].tree.x, inputs[dataset_name].tree.y)
-    # C = exponential_covariance(r, 1, 1, file_name=f'{run_dir}/exponential_covariance.png', show=False)
+    # Get ramp matrix, if specified
+    if ramp_type != 'none':
+        ramp_matrix = pyffit.corrections.get_ramp_matrix(tree.x, tree.y, ramp_type=ramp_type)
+    else:
+        ramp_matrix = []
 
+    # Define covariance matrices
     if estimate_covariance:
         pyffit.covariance.estimate(x, y, fault, dataset, mask_dists, n_samp=n_samp, r_inc=r_inc, r_max=r_max, mask_dir=mask_dir, cov_dir=cov_dir, m0=m0, c_max=c_max, sv_max=sv_max,)
     else:
@@ -1255,11 +1277,15 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
         state_lims   = [W_lim, W_dot_lim]
         state_sigmas = [W_sigma, W_dot_sigma]
     
+    if ramp_type != 'none':
+        state_lims.append(ramp_lim)
+        state_sigmas.append(ramp_sigma)
+
     # Get bounds on model parameters
     state_lim = get_state_constraints(fault, state_lims)
 
     # Perform forward Kalman filtering
-    x_model_forward, x_model = network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigmas, steady_slip=steady_slip, constrain=constrain, state_lim=state_lim, result_dir=run_dir, cost_function='state')
+    x_model_forward, x_model = network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigmas, steady_slip=steady_slip, ramp_matrix=ramp_matrix, rho=rho, constrain=constrain, state_lim=state_lim, result_dir=run_dir, cost_function='state')
 
     # Compute integrated slip
     if steady_slip:
@@ -1740,41 +1766,45 @@ def display_top(snapshot, key_type='lineno', limit=3):
 
 
 # ------------------ NIF ------------------
-def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigmas, steady_slip=False, constrain=False, state_lim=[], result_dir='.', cost_function='state'):
+def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigmas, steady_slip=False, rho=1, ramp_matrix=[], constrain=False, state_lim=[], result_dir='.', cost_function='state'):
     """
     Invert time series of surface displacements for fault slip.
     Based on the method of Bekaert et al. (2016)
 
     INPUT:
-    x_init (n_dim,)      - intial state vector (n_dim - # of model parameters) 
-    P_init (n_dim, n_dim)- intial state covariance matrix 
-    d (n_obs, n_data)    - observations (n_obs - # of time points, n_data - # of data points)
+    x_init (n_dim,)       - intial state vector (n_dim - # of model parameters) 
+    P_init (n_dim, n_dim) - intial state covariance matrix 
+    d (n_obs, n_data)     - observations (n_obs - # of time points, n_data - # of data points)
 
-    H (n_data, n_dim)    - observation matrix: maps model output x to observations d
-    R (n_data, n_data)   - data covariance matrix
-    T (n_dim, n_dim)     - state transition matrix: maps state x_k to next state x_k+1
-    Q (n_data, n_data)   - process noise covariance matrix: prescribes covariances (i.e. tuning parameters) related to temporal smoothing
+    H (n_data, n_dim)     - observation matrix: maps model output x to observations d
+    R (n_data, n_data)    - data covariance matrix
+    T (n_dim, n_dim)      - state transition matrix: maps state x_k to next state x_k+1
+    Q (n_data, n_data)    - process noise covariance matrix: prescribes covariances (i.e. tuning parameters) related to temporal smoothing
     """
 
     # -------------------- Prepare NIF --------------------
     n_patch = len(fault.triangles)
 
+    # Get fault parameter dimensions
     if steady_slip:
         n_dim   = 3 * n_patch
     else:
         n_dim   = 2 * n_patch
 
+    # Determine number of ramp coefficients
+    dim_ramp = 0
+    if len(ramp_matrix)> 0:
+        dim_ramp += ramp_matrix.shape[1]
+        n_dim    += dim_ramp
+
     # Form smoothing matrix S
     L = fault.smoothing_matrix
 
-    # Form observation matrix H
-    # H = make_observation_matrix(G, fault.smoothing_matrix, t=dt)
-
     # Form transition matrix T
-    T = make_transition_matrix(n_patch, dt, steady_slip=steady_slip)
+    T = make_transition_matrix(n_patch, dt, steady_slip=steady_slip, ramp_matrix=ramp_matrix)
 
     # Form process covariance matrix Q
-    Q = make_process_covariance_matrix(n_patch, dt, omega, steady_slip=steady_slip)
+    Q = make_process_covariance_matrix(n_patch, dt, omega, steady_slip=steady_slip, ramp_matrix=ramp_matrix, rho=rho)
 
     # Form data covariance matrix R
     R = make_data_covariance_matrix(C, n_patch, sigma, kappa, steady_slip=steady_slip)
@@ -1783,11 +1813,11 @@ def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigm
     x_init = np.zeros(n_dim)
 
     # Form initial state prediction covariance matrix P_init
-    P_init = make_prediction_covariance_matrix(n_patch, state_sigmas)
+    P_init = make_prediction_covariance_matrix(n_patch, state_sigmas, steady_slip=steady_slip, ramp_matrix=ramp_matrix)
 
     # -------------------- Run NIF --------------------
     # # 1) Perform forward Kalman filtering
-    model, resid, rms = kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir=result_dir, steady_slip=steady_slip, constrain=constrain, state_lim=state_lim, cost_function=cost_function, file_name=f'{result_dir}/results_forward.h5')
+    model, resid, rms = kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir=result_dir, steady_slip=steady_slip, ramp_matrix=ramp_matrix, constrain=constrain, state_lim=state_lim, cost_function=cost_function, file_name=f'{result_dir}/results_forward.h5')
     # write_kalman_filter_results(model, resid, rms, x_f=x_f, x_a=x_a, P_f=P_f, P_a=P_a, backward_smoothing=False, file_name=f'{result_dir}/results_forward.h5')
     # results_forward = read_kalman_filter_results(f'{result_dir}/results_forward.h5')
 
@@ -1826,7 +1856,7 @@ def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigm
     return x_model_forward, x_model_smoothing
 
 
-def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir='.', state_lim=[], steady_slip=False, constrain=False, cost_function='state', 
+def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir='.', state_lim=[], ramp_matrix=[], steady_slip=False, constrain=False, cost_function='state', 
                   backward_smoothing=False, rcond=1e-8, overwrite=True, file_name='results_forward.h5'):
     """
     INPUT:
@@ -1876,7 +1906,7 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir='.', state_li
 
         # Update observation matrix H        
         start_H = time.time()
-        H = make_observation_matrix(G, L, t=dt*k, steady_slip=steady_slip)
+        H = make_observation_matrix(G, L, t=dt*k, steady_slip=steady_slip, ramp_matrix=ramp_matrix)
         end_H = time.time() - start_H
         print(f'H-matrix time: {end_H:.2f} s')
 
@@ -1948,6 +1978,8 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir='.', state_li
 
         # Constrain state estimate 
         start_opt = time.time()
+        end_opt = 0
+        
         print(f'State range: {x_a[k, :].min():.2f} - {x_a[k, :].max():.2f}')
 
         if len(state_lim) == n_dim:
@@ -2636,9 +2668,18 @@ def backward_smoothing_old(x_f, x_a, P_f, P_a, d, dt, G, L, T, constrain=False, 
     # return   
 
 
-def make_observation_matrix(G, R, t=1, steady_slip=False):
+def make_observation_matrix(G, R, t=1, steady_slip=False, ramp_matrix=[]):
     """
     Form observation from Greens function matrix G and smoothing matrix R.
+
+    INPUT:
+    G (n_obs, n_patch)   - Green's function matrix
+    R (n_patch, n_patch) - smoothing matrix (i.e. nearest-neighbor or Laplacian)
+
+    Optional:
+    t                           - time step increment
+    steady_slip                 - True include steady-slip rate in inversion
+    ramp_matrix (n_obs, n_ramp) - design matrix for linear (n_ramp = 3) or quadtratic (n_ramp = 9) ramp function.
     """
 
     zeros_G = np.zeros_like(G)
@@ -2654,32 +2695,46 @@ def make_observation_matrix(G, R, t=1, steady_slip=False):
    
     else:
         # Form rows
-        data         = np.hstack((      G, zeros_G))
-        W_smooth     = np.hstack((      R, zeros_R))
-        W_dot_smooth = np.hstack((zeros_R,       R))
-        H            = np.vstack((data, W_smooth, W_dot_smooth))
-
-    # Plot 
-    # fig, ax = plt.subplots(figsize=(14, 8.2))
-    # ax.imshow(H[:10000, :], cmap='coolwarm', vmin=-1e-4, vmax=1e-4)
-    # ax.set_aspect(0.01)
-    # plt.show()
+        # data         = np.hstack((      G, zeros_G))
+        # W_smooth     = np.hstack((      R, zeros_R))
+        # W_dot_smooth = np.hstack((zeros_R,       R))
+        # H            = np.vstack((data, W_smooth, W_dot_smooth))
+        H = np.block([[G, zeros_G], 
+                      [R, zeros_R], 
+                      [zeros_R, R]])
+    
+    # Add columns for ramp, if specified 
+    if len(ramp_matrix) > 0:
+        A = np.zeros((H.shape[0], ramp_matrix.shape[1]))
+        A[:ramp_matrix.shape[0], :ramp_matrix.shape[1]] = ramp_matrix
+        H = np.hstack((H, A))
 
     return H
 
 
-def make_transition_matrix(n_patch, dt, steady_slip=False):
+def make_transition_matrix(n_patch, dt, steady_slip=False, ramp_matrix=[]):
     """
     Form transtion matrix from Greens function matrix G and smoothing matrix R.
     """
-
+    # Determine number of physical parameters
     if steady_slip:
         n_dim = 3 * n_patch
     else:
         n_dim = 2 * n_patch
 
+    # Determine number of ramp coefficients
+    dim_ramp = 0
+    if len(ramp_matrix)> 0:
+        dim_ramp += ramp_matrix.shape[1]
+        n_dim    += dim_ramp
+
+    # Form T matrix
     T = np.eye(n_dim)
-    T[-2*n_patch:-n_patch, -n_patch:] = np.eye(n_patch) * dt # add slip rate term
+    T[-2*n_patch - dim_ramp:-n_patch - dim_ramp, -n_patch - dim_ramp: -dim_ramp] = np.eye(n_patch) * dt # add slip rate term
+
+    # Set bottom right block to zero if including ramp (i.e. no correlation between ramp at k and k+1)
+    if len(ramp_matrix) > 0:
+        T[-dim_ramp:, -dim_ramp] = 0
 
     # # Form base matrices
     # I     = np.eye(n_patch)
@@ -2693,7 +2748,7 @@ def make_transition_matrix(n_patch, dt, steady_slip=False):
     return T
 
 
-def make_prediction_covariance_matrix(n_patch, state_sigmas):
+def make_prediction_covariance_matrix(n_patch, state_sigmas, steady_slip=False, ramp_matrix=[]):
     """
     Form initial prediction covariance matrix P_0 based on uncertainties on model parameters.
     state_sigmas have length n_dim and should correspond to uncertainties on v and/or W and W_dot.
@@ -2701,12 +2756,22 @@ def make_prediction_covariance_matrix(n_patch, state_sigmas):
 
     
     """
-    n_param = len(state_sigmas)
-    P_0     = np.eye(n_param * n_patch)
+    if len(ramp_matrix) > 0:
+        n_ramp = ramp_matrix.shape[1]
+    else:
+        n_ramp = 0
+
+    # n_param = len(state_sigmas)
+    n_param = 2 + steady_slip
+    P_0     = np.eye(n_param * n_patch + n_ramp)
     
+    # Add fault parameter constraints
     for i in range(n_patch):
         for j in range(n_param):
             P_0[i + j*n_patch, i + j*n_patch] *= state_sigmas[j]
+
+    if n_ramp > 0:
+        P_0[-n_ramp:, -n_ramp:] *= state_sigmas[-1]
 
     # # Form base matrices
     # I     = np.eye(n_patch)
@@ -2720,7 +2785,7 @@ def make_prediction_covariance_matrix(n_patch, state_sigmas):
     return P_0
 
 
-def make_process_covariance_matrix(n_patch, dt, omega, steady_slip=True):
+def make_process_covariance_matrix(n_patch, dt, omega, steady_slip=True, ramp_matrix=[], rho=1):
     """
     Form process covariance matrix Q from number of fault elements n_patch, time-step dt, and temporal smoothing parameter omega.
     """
@@ -2736,18 +2801,32 @@ def make_process_covariance_matrix(n_patch, dt, omega, steady_slip=True):
     # Q     = np.vstack((v, W, W_dot))
 
     # Form W/W_dot submatrix
-    W     = np.hstack(((omega**2) * (dt**3)/3 * I, (omega**2) * (dt**2)/2 * I))
-    W_dot = np.hstack(((omega**2) * (dt**2)/2 * I,        (omega**2) * dt * I))
-    Q_sub = np.vstack((W, W_dot))
+    # W     = np.hstack(((omega**2) * (dt**3)/3 * I, (omega**2) * (dt**2)/2 * I))
+    # W_dot = np.hstack(((omega**2) * (dt**2)/2 * I,        (omega**2) * dt * I))
+    # Q_sub = np.vstack((W, W_dot))
+
+    # W     = np.hstack(((omega**2) * (dt**3)/3 * I, (omega**2) * (dt**2)/2 * I))
+    # W_dot = np.hstack(((omega**2) * (dt**2)/2 * I,        (omega**2) * dt * I))
+    Q_sub = np.block([[(omega**2) * (dt**3)/3 * I, (omega**2) * (dt**2)/2 * I],
+                      [(omega**2) * (dt**2)/2 * I,        (omega**2) * dt * I]])
 
     # Form complete Q matrix
     if steady_slip:
         Q = np.zeros((3*n_patch, 3*n_patch))
         Q[-2*n_patch:, -2*n_patch:] = Q_sub
-    
+
     else:
         Q = Q_sub
-        
+    
+    # Add ramp term
+    if len(ramp_matrix) > 0:
+        n_ramp = ramp_matrix.shape[1]
+        Q_ramp = np.zeros((Q.shape[0] + n_ramp, Q.shape[1] + n_ramp))
+        Q_ramp[:-n_ramp, :-n_ramp] = Q
+        Q_ramp[-n_ramp:, -n_ramp:] = rho**2 * np.eye(n_ramp)
+
+        Q = Q_ramp
+
     return Q
 
 

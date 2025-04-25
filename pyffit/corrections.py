@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 
-def fit_ramp(x, y, z, x_ramp=[], y_ramp=[], deg=1, region=[-360, 360, -90, 90], grid=True):
+def fit_ramp(x, y, z, x_ramp=[], y_ramp=[], ramp_type='linear', region=[-360, 360, -90, 90], grid=True):
     """
     Fit 2D polynomnial ramp to data.
 
@@ -52,15 +52,15 @@ def fit_ramp(x, y, z, x_ramp=[], y_ramp=[], deg=1, region=[-360, 360, -90, 90], 
         y_ramp = y
 
     # Set up linear equations
-    if deg == 1:
-        get_G = lambda x, y: np.vstack((x, y, np.ones_like(x))).T
+    # if deg == 1:
+    #     get_G = lambda x, y: np.vstack((x, y, np.ones_like(x))).T
 
-    elif deg == 2:
-        get_G = lambda x, y: np.array([x**2, np.ones_like(x), x, y, (x**2)*y, (x**2)*(y**2), y**2, x*(y**2), x*y]).T
+    # elif deg == 2:
+    #     get_G = lambda x, y: np.array([x**2, np.ones_like(x), x, y, (x**2)*y, (x**2)*(y**2), y**2, x*(y**2), x*y]).T
 
     # Get design matrices
-    G_fit  = get_G(x, y)
-    G_ramp = get_G(x_ramp, y_ramp)
+    G_fit  = get_ramp_matrix(x, y, ramp_type=ramp_type)
+    G_ramp = get_ramp_matrix(x_ramp, y_ramp, ramp_type=ramp_type)
 
     # Omit nans for least-squares solve
     nans = np.isnan(d)
@@ -81,4 +81,15 @@ def fit_ramp(x, y, z, x_ramp=[], y_ramp=[], deg=1, region=[-360, 360, -90, 90], 
         return G @ m
 
 
+def get_ramp_matrix(x, y, ramp_type='linear'):
+    """ 
+    Set up system of equations to solve for a 2D linear (deg = 1) or quadratic ramp (deg = 2) .
+    """
 
+    if ramp_type == 'linear':
+        A = np.vstack((x, y, np.ones_like(x))).T
+
+    elif ramp_type == 'quadratic':
+        A = np.array([x**2, np.ones_like(x), x, y, (x**2)*y, (x**2)*(y**2), y**2, x*(y**2), x*y]).T
+    
+    return A
