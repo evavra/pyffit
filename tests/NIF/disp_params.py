@@ -22,7 +22,7 @@ mesh_file           = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modelin
 triangle_file       = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/Mesh/Geometry/mesh_connectivity_updated.txt'
 data_dir            = '/Users/evavra/Projects/SSAF/Data/InSAR/Sentinel_1/timeseries/decomposed/filt/corrections'
 file_format         = 'u_para_*_filt_10km_deramped.grd'
-run_dir             = '/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/updated_mesh/omega_1.0e+02__kappa_5.0e+00__sigma_1.0e+00'
+run_dir             = '/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/updated_mesh/omega_1.0e+03__kappa_1.0e+00__sigma_1.0e+00'
 # run_dir             = '/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/firkin/data/high_resolution/omega_1.0e+03__kappa_1.0e+01__sigma_1.0e+01'
 # samp_file           = '/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/firkin/data/high_resolution/downsampled_data/cutoff=9.9e-01_wmin=0.10_wmax=10.00_max_int_w=100.0_min_fdist=1.00_max_it=10.000000.pkl'
 samp_file           = '/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/data/updated_mesh/downsampled_data/cutoff=1.0e+00_wmin=0.10_wmax=10.00_max_int_w=0.1_min_fdist=0.20_max_it=10.000000.h5'

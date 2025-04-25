@@ -16,8 +16,8 @@ import cmcrameri.cm as cmc
 # mode = ['analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
 # mode = ['NIF', 'analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
 # mode = ['downsample'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
-# mode = ['NIF', 'analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
-mode = ['analyze_disp'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
+mode = ['NIF', 'analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
+# mode = ['analyze_disp'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
 
 # Files and directories
 # mesh_file           = '/Users/evavra/Projects/SSAF/Analysis/Finite_Fault_Modeling/Mesh/Geometry/mesh_points_simple.txt'
@@ -78,34 +78,42 @@ slip_components = [0]       # slip components to use [0 for strike-slip, 1 for d
 
 # Resolution based resampling
 # resolution_threshold = 2.3e-1 # cutoff value for resolution matrix (lower values = more points)
-# resolution_threshold = 1.0 # cutoff value for resolution matrix (lower values = more points)
-resolution_threshold = 0.99 # cutoff value for resolution matrix (lower values = more points)
+resolution_threshold = 1.0 # cutoff value for resolution matrix (lower values = more points)
+# resolution_threshold = 0.9 # cutoff value for resolution matrix (lower values = more points)
 width_min            = 0.1 # Min. allowed cell size (km)
 width_max            = 10  # Max. allowed cell size (km)
-max_intersect_width  = 0.2 # Max. allowed size for fault-intersecting cells (km)
-min_fault_dist       = 0.5 # Buffer distance from fault to enforce max_intersect width
+max_intersect_width  = 0.1 # Max. allowed size for fault-intersecting cells (km)
+min_fault_dist       = 0.1 # Buffer distance from fault to enforce max_intersect width
+# min_fault_dist       = 1.0 # Buffer distance from fault to enforce max_intersect width
 max_iter             = 10  # Max. allowed sampling iterations
 smoothing_samp       = False
 edge_slip_samp       = False
 
 # NIF parameters
-omega           = 1e3   # temporal smoothing hyperparameter
-kappa           = 1e0   # spatial smoothing hyperparameter
-sigma           = 1e0   # data covariance scaling hyperparameter (Note: for single dataset, and single kappa value for steady-state velocity, transient slip, and transient velocity, sigma becomes reduntant)
-# kappa           = 1e2   # spatial smoothing hyperparameter
+omega           = 1e4   # temporal smoothing hyperparameter
+kappa           = 1e-1  # spatial smoothing hyperparameter
+sigma           = 1e0   # data covariance scaling hyperparameter 
+rho             = 1e0   # ramp covariance scaling hyperparameter 
+
 mu              = kappa # spatial smoothing hyperparameter
 eta             = kappa # zero-edge-slip hyperparameter
   
-# Uncertainties and limits
+# State vector settings, 
 steady_slip     = False    # Include constant slip rate in state vector
+ramp_type       = 'linear' # Include ramp in state vector ('none', 'linear', or 'quadtratic')
 constrain       = True     # Perform nonlinear solve for constrained state vector
-v_sigma         = 1e-9     # initial uncertainty on interseimic slip rate (mm/yr) 
-W_sigma         = 10       # initial uncertainty on transient slip (mm) 
-W_dot_sigma     = 10       # initial uncertainty on transient slip rate (mm/yr) \
 
-v_lim           = (0, 0.1)  # min./max. bounds on steady slip rate values (mm/yr)
-W_lim           = (0, 100) # min./max. bounds on transient slip values (mm)
-W_dot_lim       = (0, 100) # min./max. bounds on transient rate slip values (mm/yr)
+# State vector initial uncertainties
+v_sigma         = 1e-9  # initial uncertainty on interseimic slip rate (mm/yr) 
+W_sigma         = 100   # initial uncertainty on transient slip (mm) 
+W_dot_sigma     = 100   # initial uncertainty on transient slip rate (mm/yr) \
+ramp_sigma      = 100   # initial uncertainty on transient slip rate (mm/yr) \
+
+# State vector constraints
+v_lim           = (0, 0.1)    # min./max. bounds on steady slip rate values (mm/yr)
+W_lim           = (0, 100)    # min./max. bounds on transient slip values (mm)
+W_dot_lim       = (0, 100)    # min./max. bounds on transient rate slip values (mm/yr)
+ramp_lim        = (-100, 100) # min./max. bounds on ramp coefficient values
 
 # Plot parameters
 xlim       = [-35.77475071, 26.75029172]
@@ -120,7 +128,8 @@ figsize    = (10, 7)
 dpi        = 75
 markersize = 40
 
-# Get file path
+# Get file path for loading correct parameters in the future
+# Note: automatically extracts this file's path -- do not edit!
 param_file = __file__
 # ----------------------------------------------------
 
