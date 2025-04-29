@@ -529,7 +529,7 @@ def plot_fault_3d(mesh, triangles, c=[], fig_ax=[], edges=False, cmap_name='viri
 
 def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), orientation='horizontal', cmap_disp='coolwarm', x_ax='east', fault_height=0.5, 
                       fault_lim='mesh', title='', fault_label='', markersize=10, trace=False, vlim_disp=[], vlim_slip=[], xlim=[], ylim=[], n_tick=11, n_seg=10, mu=0, eta=0, 
-                      shrink=0.01, fontsize=8, file_name='', show=False, dpi=300):
+                      shrink=0.01, fontsize=8, file_name='', show=False, dpi=400):
     """
     Plot three displacement panels above side-view of fault model.
     """
@@ -546,6 +546,9 @@ def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), 
     fig.suptitle(title)
     x_idx = 0
 
+    n_data_panels = len(panels)
+    n_fault_panels = len(fault_panels)
+
     if orientation == 'horizontal':
         gs    = fig.add_gridspec(len(fault_panels) + 1, 4, width_ratios=(1, 1, 1, 0.05), height_ratios=[1] + [fault_height for i in range(len(fault_panels))])
 
@@ -559,12 +562,15 @@ def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), 
             ax.set_xlabel('East (km)')
 
     elif orientation == 'vertical':
-        gs    = fig.add_gridspec(3 + len(fault_panels), 2, width_ratios=(1, 0.025), height_ratios=[1 for i in range(len(panels))] + [1 for i in range(len(fault_panels))],
+        width_ratios  = (1, 0.025)
+        height_ratios = [1 for i in range(n_data_panels)] + [1 for i in range(n_fault_panels)]
+        
+        gs    = fig.add_gridspec(n_data_panels + n_fault_panels, 2, width_ratios=width_ratios, height_ratios=height_ratios,
                                  hspace=0.2, wspace=0.1)
 
-        data_axes  = [fig.add_subplot(gs[i, 0]) for i in range(3)]
-        fault_axes = [fig.add_subplot(gs[3 + i, 0]) for i in range(len(fault_panels))]
-        caxes      = [fig.add_subplot(gs[i, 1]) for i in range(3 + len(fault_panels))]
+        data_axes  = [fig.add_subplot(gs[i, 0]) for i in range(n_data_panels)]
+        fault_axes = [fig.add_subplot(gs[n_data_panels + i, 0]) for i in range(n_fault_panels)]
+        caxes      = [fig.add_subplot(gs[i, 1]) for i in range(n_data_panels + n_fault_panels)]
 
         # labels
         for ax in data_axes:
@@ -592,7 +598,7 @@ def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), 
         vmax_disp = [vlim[1] for vlim in vlim_disp]
 
     # ---------------------------------------- Displacement panels ----------------------------------------
-    for i in range(3):
+    for i in range(n_data_panels):
         panel = panels[i]
         data  = panel['data']
         label = panel['label']
@@ -630,7 +636,7 @@ def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), 
         ylim = [np.nanmin(all_y), np.nanmax(all_y)]
 
     # Plot fault trace
-    for i in range(3):
+    for i in range(n_data_panels):
         data_axes[i].plot(mesh[:, 0][mesh[:, 2] == 0], mesh[:, 1][mesh[:, 2] == 0], linewidth=1, c='k')
 
         data_axes[i].set_title(panels[i]['label'], fontsize=fontsize)

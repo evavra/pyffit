@@ -11,12 +11,9 @@ import cmcrameri.cm as cmc
 
 # -------------------------- Required parameters --------------------------
 # Run mode(s)
-# mode = ['analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
-# mode = ['analyze'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
-# mode = ['analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
-# mode = ['NIF', 'analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
 # mode = ['downsample'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
-mode = ['NIF', 'analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
+# mode = ['NIF', 'analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
+mode = ['analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both                    
 # mode = ['analyze_disp'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
 
 # Files and directories
@@ -121,11 +118,12 @@ ylim       = [-26.75029172, 55.08597388]
 vlim_slip  = [0, 40]
 vlim_disp  = [[-20, 20],
               [-20, 20],
+              [-20, 20],
               [-20, 20]] 
 cmap_disp  = cmc.vik
 cmap_slip  = cmc.lajolla_r
 figsize    = (10, 7)
-dpi        = 75
+dpi        = 150
 markersize = 40
 
 # Get file path for loading correct parameters in the future

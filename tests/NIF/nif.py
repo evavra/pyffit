@@ -636,17 +636,14 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
             date_index_range=[-22, -14], xkey='x', coord_type='xy', dataset_name='data',
             check_lon=False, reference_time_series=True, use_dates=False, use_datetime=False, dt=1, data_factor=1,
             model_file='', mask_file='', estimate_covariance=False, mask_dists=[3], n_samp=2*10**7, r_inc=0.2, r_max=80, mask_dir='.', cov_dir='.', 
-            m0=[0.9, 1.5, 5], c_max=2, sv_max=2, ref_point=[-116, 33.5], avg_strike=315.8, trace_inc=0.01, poisson_ratio=0.25, 
+            m0=[0.9, 1.5, 5], c_max=2, sv_max=2, ramp_type='none', ref_point=[-116, 33.5], avg_strike=315.8, trace_inc=0.01, poisson_ratio=0.25, 
             shear_modulus=6*10**9, disp_components=[1], slip_components=[0], resolution_threshold=2.3e-1, 
             width_min=0.1, width_max=10, max_intersect_width=100, min_fault_dist=1, max_iter=10, 
-            smoothing_samp=False, edge_slip_samp=False,  omega=1e1, sigma=1e1, kappa=2e1, mu=2e1, 
-            eta=2e1, steady_slip=False, constrain=False, v_sigma=1e-9, W_sigma=1,  W_dot_sigma=1, v_lim=(0,3), W_lim=(0,30), W_dot_lim=(0,50), 
+            smoothing_samp=False, edge_slip_samp=False, omega=1e1, sigma=1e1, kappa=2e1, mu=2e1, 
+            eta=2e1, rho=1e0, steady_slip=False, constrain=False, v_sigma=1e-9, W_sigma=1,  W_dot_sigma=1, ramp_sigma=100, v_lim=(0, 3), W_lim=(0, 30), W_dot_lim=(0, 50), ramp_lim=(-100, 100),
             xlim=[-35.77475071,26.75029172], ylim=[-26.75029172, 55.08597388], vlim_slip=[0, 20], 
             vlim_disp=[[-10,10], [-10,10], [-1,1]], cmap_slip=cmc.lajolla, cmap_disp=cmc.vik, figsize=(10, 10), dpi=75, markersize=40, 
-            param_file='params.py',
-
-            # look_dir, asc_velo_model_file, des_velo_model_file, ykey='y', EPSG='32611', 
-            # data_region=[-116.4, -115.7, 33.25, 34.0], smoothing_inv=True, edge_slip_inv=False,
+            param_file='params.py'
             ):
     """
     Analyze network inversion filter results.
@@ -719,6 +716,12 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
     n_data = inputs[dataset_name].tree.x.size
     dt    /= 365.25
 
+    # Get ramp matrix, if specified
+    if ramp_type != 'none':
+        ramp_matrix = pyffit.corrections.get_ramp_matrix(tree.x, tree.y, ramp_type=ramp_type)
+    else:
+        ramp_matrix = []
+
     # -------------------------- Prepare NIF objects --------------------------
     print(f'Number of fault elements: {n_patch}')
     print(f'Number of data points:    {n_data}')
@@ -727,14 +730,13 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
     samp_file = f'cutoff={resolution_threshold:.1e}_wmin={width_min:.2f}_wmax={width_max:.2f}_max_int_w={max_intersect_width:.1f}_min_fdist={min_fault_dist:.2f}_max_it={max_iter:0f}'
     d, std = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{dataset_name}/{samp_file}.h5')
 
-
     # Load results
     results_forward = h5py.File(f'{run_dir}/results_forward.h5', 'r')
     x_model_forward = results_forward['x_a']
 
     results_smoothing = h5py.File(f'{run_dir}/results_smoothing.h5', 'r')
     x_model           = results_smoothing['x_s']
-    
+
     # Compute integrated slip
     if steady_slip:
         s_model_forward = integrate_slip(results_forward['x_a'], dt)
@@ -743,9 +745,6 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
         s_model_forward = x_model_forward[:, :n_patch]
         s_model = x_model[:, :n_patch]
     s_true = slip_model[:, 0, :].T
-
-    # Compute integrated slip
-    # slip_model = integrate_slip(results_smoothing.x_s, dt)
 
     # Get along-strike projected coordinates
     mesh_r         = np.copy(fault.mesh)
@@ -759,7 +758,6 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
     x_center -= x_center.min()
 
     # Interpolate
-    # slip_interp = griddata((x_center, z_center), slip_model[-1, :], (x_grid, z_grid), method='cubic')
     n_x = int(x_center.max())*20
     n_z = int(abs(z_center).max())*20
     dt  = convert_timedelta((dataset['date'][1] - dataset['date'][0]).values)
@@ -779,210 +777,212 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
     A = np.array([(slip_history[k + 1, :, :] - slip_history[k - 1, :, :])/(2*dt) for k in range(1, len(slip_history) - 1)])
     slip_rate_history[1:-1, :, :] = A
 
-    # -------------------- Plot history --------------------
-    dpi    = 300
-    hlines = [datetime.datetime(2017, 9, 8, 0, 0, 0), datetime.datetime(2019, 7, 5, 0, 0, 0)]
+    summary_plots = False
+    if summary_plots:
+        # -------------------- Plot history --------------------
+        dpi    = 300
+        hlines = [datetime.datetime(2017, 9, 8, 0, 0, 0), datetime.datetime(2019, 7, 5, 0, 0, 0)]
 
- 
-    vmin   = 0
-    vmax   = 5
-    title  = 'Depth averaged slip rate'
-    label  = 'Slip rate (mm/yr)'
-    file_name = f'{result_dir}/History_slip_rate.png'
+        vmin   = 0
+        vmax   = 5
+        title  = 'Depth averaged slip rate'
+        label  = 'Slip rate (mm/yr)'
+        file_name = f'{result_dir}/History_slip_rate.png'
 
-    plot_slip_history(x_rng, dataset['date'], np.mean(slip_rate_history, axis=1), cmap=cmap_slip, vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
+        plot_slip_history(x_rng, dataset['date'], np.mean(slip_rate_history, axis=1), cmap=cmap_slip, vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
 
-    vmin   = 0
-    vmax   = 15
-    title  = 'Surface slip rate'
-    label  = 'Slip rate (mm/yr)'
-    file_name = f'{result_dir}/History_surface_slip_rate.png'
+        vmin   = 0
+        vmax   = 15
+        title  = 'Surface slip rate'
+        label  = 'Slip rate (mm/yr)'
+        file_name = f'{result_dir}/History_surface_slip_rate.png'
 
-    plot_slip_history(x_rng, dataset['date'], slip_rate_history[:, -1, :], cmap=cmap_slip, vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
+        plot_slip_history(x_rng, dataset['date'], slip_rate_history[:, -1, :], cmap=cmap_slip, vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
 
-    vmin   = 0
-    vmax   = 10
-    title  = 'Depth averaged slip'
-    label  = 'Slip (mm)'
-    file_name = f'{result_dir}/History_slip.png'
-    plot_slip_history(x_rng, dataset['date'], np.mean(slip_history, axis=1), cmap=cmap_slip, vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
+        vmin   = 0
+        vmax   = 10
+        title  = 'Depth averaged slip'
+        label  = 'Slip (mm)'
+        file_name = f'{result_dir}/History_slip.png'
+        plot_slip_history(x_rng, dataset['date'], np.mean(slip_history, axis=1), cmap=cmap_slip, vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
 
-    vmin   = 0
-    vmax   = 40
-    title  = 'Surface slip'
-    label  = 'Slip (mm)'
-    file_name = f'{result_dir}/History_surface_slip.png'
-    plot_slip_history(x_rng, dataset['date'], slip_history[:, -1, :], cmap=cmap_slip, vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
-    
-    # -------------------- Slip s --------------------
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Slip (mm)')
-    ax.set_ylim(0, np.max(s_model))
-
-    for i in range(n_patch):
-        ax.plot(dataset.date, s_true[:, i], c='k', alpha=0.3, zorder=0)
-    plt.savefig(f'{result_dir}/Evolution_slip_0.png', dpi=300)
-
-    for i in range(n_patch):
-        ax.plot(dataset.date, s_model_forward[:, i], c='C0', alpha=0.2, )
-    plt.savefig(f'{result_dir}/Evolution_slip_1.png', dpi=300)
-    
-    for i in range(n_patch):
-        ax.plot(dataset.date, s_model[:, i], c='C3', alpha=0.3, )
-    # ax.legend()
-    plt.savefig(f'{result_dir}/Evolution_slip_2.png', dpi=300)
-    plt.close()
-
-    # -------------------- Slip s by depth --------------------
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Slip (mm)')
-    ax.set_ylim(-0.2, np.max(s_model))
-
-    vmin      = -3
-    vmax      = 0
-    n_tick    = 6
-    cmap_name = cmc.roma
-    n_seg     = 10
-
-    cvar  = np.min(fault.patches[:, :, 2], axis=1)
-    cval  = (cvar - vmin)/(vmax - vmin) # Normalized color values
-    ticks = np.linspace(vmin, vmax, n_tick)
-
-    cmap  = colors.LinearSegmentedColormap.from_list(cmap_name, plt.get_cmap(cmap_name, 265)(np.linspace(0, 1, 265)), n_seg)
-    sm    = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=vmin, vmax=vmax))
-    c     = cmap(cval)
-
-    for i in range(n_patch):
-        ax.plot(dataset.date, s_model[:, i], c=c[i], alpha=0.3, zorder=int(abs(cval[i])))
-
-    # ax.legend()
-    plt.colorbar(sm, ax=plt.gca(), label='Depth (km)')
-    plt.savefig(f'{result_dir}/Evolution_slip_depth.png', dpi=300)
-    plt.close()
-
-    # -------------------- Residuals --------------------
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Residual (mm)')
-    # ax.set_xlim(0, 200)
-    ax.plot(dataset.date, np.mean(np.abs(results_forward['resid']), axis=1), c='C0', alpha=1.0, zorder=0, label='Filtered')
-    ax.plot(dataset.date, np.mean(np.abs(results_smoothing['resid']), axis=1), c='C3', alpha=1.0, zorder=0, label='Smoothed')
-    ax.legend()
-    plt.savefig(f'{result_dir}/Evolution_residuals.png', dpi=300)
-    plt.close()
-
-    # -------------------- RMS --------------------
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.set_xlabel('Time')
-    ax.set_ylabel('RMS (mm)')
-    # ax.set_xlim(0, 200)
-    ax.plot(dataset.date, results_forward['rms'][()], c='C0', alpha=1, zorder=0, label='Filtered')
-    ax.plot(dataset.date, results_smoothing['rms'][()], c='C3', alpha=1, zorder=0, label='Smoothed')
-    ax.legend()
-    plt.savefig(f'{result_dir}/Evolution_rms.png', dpi=300)
-    plt.close()
-
-    fig, ax = plt.subplots(figsize=(6, 4))
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Change in RMS (mm)')
-    # ax.set_xlim(0, 200)
-    ax.plot(dataset.date, results_forward['rms'][()] - results_smoothing['rms'][()], c='k', alpha=1, zorder=0, label='Filtered - smoothed')
-    ax.legend()
-    plt.savefig(f'{result_dir}/Evolution_rms_diff.png', dpi=300)
-    plt.close()
-
-    # -------------------- Slip rate v --------------------
-    if steady_slip:
+        vmin   = 0
+        vmax   = 40
+        title  = 'Surface slip'
+        label  = 'Slip (mm)'
+        file_name = f'{result_dir}/History_surface_slip.png'
+        plot_slip_history(x_rng, dataset['date'], slip_history[:, -1, :], cmap=cmap_slip, vmin=vmin, vmax=vmax, title=title, label=label, hlines=hlines, file_name=file_name)
+        
+        # -------------------- Slip s --------------------
         fig, ax = plt.subplots(figsize=(6, 4))
-
-        for i in range(0, n_patch):
-            ax.plot(dataset.date, results_forward['x_a'][:, i], c='C0', alpha=0.2,)
-            ax.plot(dataset.date, results_smoothing['x_s'][:, i], c='C3', alpha=0.2,)
-
         ax.set_xlabel('Time')
-        ax.set_ylabel('Slip rate (mm/yr)')
-        ax.legend()
-        plt.savefig(f'{result_dir}/Evolution_v.png', dpi=300)
+        ax.set_ylabel('Slip (mm)')
+        ax.set_ylim(0, np.max(s_model))
+
+        for i in range(n_patch):
+            ax.plot(dataset.date, s_true[:, i], c='k', alpha=0.3, zorder=0)
+        plt.savefig(f'{result_dir}/Evolution_slip_0.png', dpi=300)
+
+        for i in range(n_patch):
+            ax.plot(dataset.date, s_model_forward[:, i], c='C0', alpha=0.2, )
+        plt.savefig(f'{result_dir}/Evolution_slip_1.png', dpi=300)
+        
+        for i in range(n_patch):
+            ax.plot(dataset.date, s_model[:, i], c='C3', alpha=0.3, )
+        # ax.legend()
+        plt.savefig(f'{result_dir}/Evolution_slip_2.png', dpi=300)
         plt.close()
 
-    # -------------------- Transient slip W --------------------
-    fig, ax = plt.subplots(figsize=(6, 4))
+        # -------------------- Slip s by depth --------------------
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Slip (mm)')
+        ax.set_ylim(-0.2, np.max(s_model))
 
-    for i in range(steady_slip * n_patch, (1 + steady_slip) * n_patch):
-        ax.plot(dataset.date, results_forward['x_a'][:, i], c='C0', alpha=0.2, )
-        ax.plot(dataset.date, results_smoothing['x_s'][:, i], c='C3', alpha=0.2, )
-        ax.plot(dataset.date, s_true[:, i - n_patch], c='k', alpha=0.2, )
-        
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Transient slip (mm)')
-    plt.savefig(f'{result_dir}/Evolution_W.png', dpi=300)
-    plt.close()
+        vmin      = -3
+        vmax      = 0
+        n_tick    = 6
+        cmap_name = cmc.roma
+        n_seg     = 10
 
-    # -------------------- Transient slip rate W_dot --------------------
-    fig, ax = plt.subplots(figsize=(6, 4))
+        cvar  = np.min(fault.patches[:, :, 2], axis=1)
+        cval  = (cvar - vmin)/(vmax - vmin) # Normalized color values
+        ticks = np.linspace(vmin, vmax, n_tick)
 
-    for i in range((steady_slip + 1) * n_patch, (steady_slip + 2) * n_patch):
-        ax.plot(dataset.date, results_forward['x_a'][:, i], c='C0', alpha=0.2)
-        ax.plot(dataset.date, results_smoothing['x_s'][:, i], c='C3', alpha=0.2)
+        cmap  = colors.LinearSegmentedColormap.from_list(cmap_name, plt.get_cmap(cmap_name, 265)(np.linspace(0, 1, 265)), n_seg)
+        sm    = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=vmin, vmax=vmax))
+        c     = cmap(cval)
 
-    ax.set_xlabel('Time')
-    ax.set_ylabel('Transient slip rate (mm/yr)')
-    plt.savefig(f'{result_dir}/Evolution_W_dot.png', dpi=300)
-    plt.close()
+        for i in range(n_patch):
+            ax.plot(dataset.date, s_model[:, i], c=c[i], alpha=0.3, zorder=int(abs(cval[i])))
+
+        # ax.legend()
+        plt.colorbar(sm, ax=plt.gca(), label='Depth (km)')
+        plt.savefig(f'{result_dir}/Evolution_slip_depth.png', dpi=300)
+        plt.close()
+
+        # -------------------- Residuals --------------------
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Residual (mm)')
+        # ax.set_xlim(0, 200)
+        ax.plot(dataset.date, np.mean(np.abs(results_forward['resid']), axis=1), c='C0', alpha=1.0, zorder=0, label='Filtered')
+        ax.plot(dataset.date, np.mean(np.abs(results_smoothing['resid']), axis=1), c='C3', alpha=1.0, zorder=0, label='Smoothed')
+        ax.legend()
+        plt.savefig(f'{result_dir}/Evolution_residuals.png', dpi=300)
+        plt.close()
+
+        # -------------------- RMS --------------------
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.set_xlabel('Time')
+        ax.set_ylabel('RMS (mm)')
+        # ax.set_xlim(0, 200)
+        ax.plot(dataset.date, results_forward['rms'][()], c='C0', alpha=1, zorder=0, label='Filtered')
+        ax.plot(dataset.date, results_smoothing['rms'][()], c='C3', alpha=1, zorder=0, label='Smoothed')
+        ax.legend()
+        plt.savefig(f'{result_dir}/Evolution_rms.png', dpi=300)
+        plt.close()
+
+        fig, ax = plt.subplots(figsize=(6, 4))
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Change in RMS (mm)')
+        # ax.set_xlim(0, 200)
+        ax.plot(dataset.date, results_forward['rms'][()] - results_smoothing['rms'][()], c='k', alpha=1, zorder=0, label='Filtered - smoothed')
+        ax.legend()
+        plt.savefig(f'{result_dir}/Evolution_rms_diff.png', dpi=300)
+        plt.close()
+
+        # -------------------- Slip rate v --------------------
+        if steady_slip:
+            fig, ax = plt.subplots(figsize=(6, 4))
+
+            for i in range(0, n_patch):
+                ax.plot(dataset.date, results_forward['x_a'][:, i], c='C0', alpha=0.2,)
+                ax.plot(dataset.date, results_smoothing['x_s'][:, i], c='C3', alpha=0.2,)
+
+            ax.set_xlabel('Time')
+            ax.set_ylabel('Slip rate (mm/yr)')
+            ax.legend()
+            plt.savefig(f'{result_dir}/Evolution_v.png', dpi=300)
+            plt.close()
+
+        # -------------------- Transient slip W --------------------
+        fig, ax = plt.subplots(figsize=(6, 4))
+
+        for i in range(steady_slip * n_patch, (1 + steady_slip) * n_patch):
+            ax.plot(dataset.date, results_forward['x_a'][:, i], c='C0', alpha=0.2, )
+            ax.plot(dataset.date, results_smoothing['x_s'][:, i], c='C3', alpha=0.2, )
+            ax.plot(dataset.date, s_true[:, i - n_patch], c='k', alpha=0.2, )
+            
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Transient slip (mm)')
+        plt.savefig(f'{result_dir}/Evolution_W.png', dpi=300)
+        plt.close()
+
+        # -------------------- Transient slip rate W_dot --------------------
+        fig, ax = plt.subplots(figsize=(6, 4))
+
+        for i in range((steady_slip + 1) * n_patch, (steady_slip + 2) * n_patch):
+            ax.plot(dataset.date, results_forward['x_a'][:, i], c='C0', alpha=0.2)
+            ax.plot(dataset.date, results_smoothing['x_s'][:, i], c='C3', alpha=0.2)
+
+        ax.set_xlabel('Time')
+        ax.set_ylabel('Transient slip rate (mm/yr)')
+        plt.savefig(f'{result_dir}/Evolution_W_dot.png', dpi=300)
+        plt.close()
     
-    # # -------------------- Plot fault and model fit --------------------
-    # params      = []
-    # date        = datasets[dataset_name].date[-1]
-    # title       = f'Date: {date}'
-    # orientation = 'horizontal'
-    # fault_lim   = 'mesh'
-    # show        = False
-    # figsize     = (6.5, 8)
-    # markersize  = 5
+    regular_fault_panels = False
+    if regular_fault_panels:
+        # -------------------- Plot fault and model fit --------------------
+        params      = []
+        date        = datasets[dataset_name].date[-1]
+        title       = f'Date: {date}'
+        orientation = 'horizontal'
+        fault_lim   = 'mesh'
+        show        = False
+        figsize     = (6.5, 8)
+        markersize  = 5
 
-    # for run, results, s in zip(['Forward', 'Smoothed'], [results_forward, results_smoothing], [s_model_forward, s_model]):
-    #     for k in range(len(x_model)):
-            
-    #         if use_datetime:
-    #             date = datasets[dataset_name].date[k].dt.strftime('%Y-%m-%d').item()
-    #         else:
-    #             date = datasets[dataset_name].date[k]
+        for run, results, s in zip(['Forward', 'Smoothed'], [results_forward, results_smoothing], [s_model_forward, s_model]):
+            for k in range(len(x_model)):
+                
+                if use_datetime:
+                    date = datasets[dataset_name].date[k].dt.strftime('%Y-%m-%d').item()
+                else:
+                    date = datasets[dataset_name].date[k]
 
-    #         slip_resid = s[k, :] - s_true[k, :]
+                slip_resid = s[k, :] - s_true[k, :]
 
-    #         title       = f'[{run}] Date: {date}'
-    #         file_name   = f'{result_dir}/Results/{run}_{date}.png'
+                title       = f'[{run}] Date: {date}'
+                file_name   = f'{result_dir}/Results/{run}_{date}.png'
 
-    #         data_panels = [
-    #                     dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=d[k, :n_data],          label=dataset_name),
-    #                     dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results['model'][k, :], label='Model'),
-    #                     dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results['resid'][k, :], label=f"Residuals ({np.abs(results['resid'][k, :]).mean():.2f}"+ r'$\pm$' + f"{np.abs(results['resid'][k, :]).std():.2f})"),
-    #                     ]
-            
-    #         fault_panels = [
-    #                     dict(slip=s[k, :], cmap=cmap_slip, vlim=vlim_slip, title='Slip model', label='Slip (mm)'),
-    #                     # dict(slip=slip_resid, cmap=cmc.vik,   vlim=[-1, 1], title=f'Residuals ({np.abs(slip_resid).mean():.2f}'+ r'$\pm$' + f'{np.abs(slip_resid).std():.2f})',  label='Residuals (mm)'),
-    #                     ]
-            
-    #         params.append([data_panels, fault_panels, fault, figsize, title, markersize, orientation, fault_lim, vlim_slip, cmap_disp, vlim_disp, xlim, ylim, dpi, show, file_name])
+                data_panels = [
+                            dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=d[k, :n_data],          label=dataset_name),
+                            dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results['model'][k, :], label='Model'),
+                            dict(x=inputs[dataset_name].tree.x, y=inputs[dataset_name].tree.y, data=results['resid'][k, :], label=f"Residuals ({np.abs(results['resid'][k, :]).mean():.2f}"+ r'$\pm$' + f"{np.abs(results['resid'][k, :]).std():.2f})"),
+                            ]
+                
+                fault_panels = [
+                            dict(slip=s[k, :], cmap=cmap_slip, vlim=vlim_slip, title='Slip model', label='Slip (mm)'),
+                            # dict(slip=slip_resid, cmap=cmc.vik,   vlim=[-1, 1], title=f'Residuals ({np.abs(slip_resid).mean():.2f}'+ r'$\pm$' + f'{np.abs(slip_resid).std():.2f})',  label='Residuals (mm)'),
+                            ]
+                
+                params.append([data_panels, fault_panels, fault, figsize, title, markersize, orientation, fault_lim, vlim_slip, cmap_disp, vlim_disp, xlim, ylim, dpi, show, file_name])
 
-    #         if k == len(x_model):
-    #             print(np.mean(np.abs(d[k, :n_data])), np.std(np.abs(d[k, :n_data])))
+                if k == len(x_model):
+                    print(np.mean(np.abs(d[k, :n_data])), np.std(np.abs(d[k, :n_data])))
 
-    # # Parallel
-    # os.environ["OMP_NUM_THREADS"] = "1"
-    # start       = time.time()
-    # n_processes = multiprocessing.cpu_count()
-    # pool        = multiprocessing.Pool(processes=n_processes - 1)
-    # results     = pool.map(fault_panel_wrapper, params)
-    # pool.close()
-    # pool.join()
-    # del pool
-    # del results
-    # gc.collect()
-
+        # Parallel
+        os.environ["OMP_NUM_THREADS"] = "1"
+        start       = time.time()
+        n_processes = multiprocessing.cpu_count()
+        pool        = multiprocessing.Pool(processes=n_processes - 1)
+        results     = pool.map(fault_panel_wrapper, params)
+        pool.close()
+        pool.join()
+        del pool
+        del results
+        gc.collect()
 
     # Rotate data so fault is horizontal
     fault_r        = copy.deepcopy(fault)
@@ -1000,18 +1000,6 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
     fault_r.trace[:, 0] = x_trace
     fault_r.trace[:, 1] = y_trace
 
-
-    # panels = [
-    #             dict(x=x_r, y=y_r, data=inputs[dataset_name].tree.data, label=panel_labels[0]),
-    #             dict(x=x_r, y=y_r, data=inputs[dataset_name].model,     label=panel_labels[1]),
-    #             dict(x=x_r, y=y_r, data=inputs[dataset_name].resids,    label=panel_labels[2]),
-    #             ]
-
-    # pyffit.figures.plot_fault_panels(panels, mesh_r, fault.triangles, fault.slip[:, 0], figsize=(12, 8), title=title, markersize=1,
-    #                                     orientation='vertical', fault_lim='map', vlim_slip=vlim_slip, vlim_disp=vlim_disp, xlim=xlim_r, 
-    #                                     ylim=ylim_r, dpi=dpi, show=False, filename=f'{run_dir}/Rotated_results_{filestem}') 
-
-
     # -------------------- Plot rotated fault and model fit --------------------
     params      = []
     date        = datasets[dataset_name].date[-1]
@@ -1021,11 +1009,18 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
     show        = False
     xlim        = [-25, 25]
     ylim        = [-5, 5] 
-    figsize     = (8, 7.5)
+    figsize     = (8, 8)
     markersize  = 5
-
+    
     for run, results, s in zip(['Forward', 'Smoothed'], [results_forward, results_smoothing], [s_model_forward, s_model]):
         for k in range(len(x_model)):
+            # Get ramp
+            if run == 'Forward':
+                key = 'x_a'
+            else:
+                key = 'x_s'
+
+            ramp = ramp_matrix @ results[key][k, -3:]
             
             if use_datetime:
                 date = datasets[dataset_name].date[k].dt.strftime('%Y-%m-%d').item()
@@ -1039,7 +1034,8 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
 
             data_panels = [
                         dict(x=x_r, y=y_r, data=d[k, :n_data],          label=dataset_name),
-                        dict(x=x_r, y=y_r, data=results['model'][k, :], label='Model'),
+                        dict(x=x_r, y=y_r, data=results['model'][k, :], label=f'Model'),
+                        dict(x=x_r, y=y_r, data=ramp,                   label=f'Ramp ({ramp.min():.2f} - {ramp.max():.2f})'),
                         dict(x=x_r, y=y_r, data=results['resid'][k, :], label=f"Residuals ({np.abs(results['resid'][k, :]).mean():.2f}"+ r'$\pm$' + f"{np.abs(results['resid'][k, :]).std():.2f})"),
                         ]
             
@@ -1192,12 +1188,6 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
                                          avg_strike=avg_strike, ref_point=ref_point)
     n_patch = len(fault.triangles)
 
-    # Get number of fault parameters (i.e. excluding ramp)
-    if steady_slip:
-        n_fault_dim   = 3 * n_patch
-    else:
-        n_fault_dim   = 2 * n_patch
-
     # Load data
     dataset = pyffit.data.load_insar_dataset(data_dir, file_format, dataset_name, ref_point, data_factor=data_factor, xkey=xkey, 
                                              coord_type=coord_type, date_index_range=date_index_range, 
@@ -1246,23 +1236,38 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     n_data = inputs[dataset_name].tree.x.size
     dt    /= 365.25
 
-    # -------------------------- Prepare NIF objects --------------------------
-    print(f'Number of fault elements: {n_patch}')
-    print(f'Number of data points:    {n_data}')
-
-    # Prepare data
-    samp_file = f'cutoff={resolution_threshold:.1e}_wmin={width_min:.2f}_wmax={width_max:.2f}_max_int_w={max_intersect_width:.1f}_min_fdist={min_fault_dist:.2f}_max_it={max_iter:0f}'
-    d, std    = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_fault_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{dataset_name}/{samp_file}.h5')
-
-    # Get Greens Functions
-    G = -fault.greens_functions(inputs[dataset_name].tree.x, inputs[dataset_name].tree.y, disp_components=disp_components, slip_components=slip_components, rotation=avg_strike, squeeze=True)
-    
     # Get ramp matrix, if specified
     if ramp_type != 'none':
         ramp_matrix = pyffit.corrections.get_ramp_matrix(tree.x, tree.y, ramp_type=ramp_type)
     else:
         ramp_matrix = []
 
+    # Determine number of physical parameters
+    if steady_slip:
+        n_fault_dim = 3 * n_patch
+    else:
+        n_fault_dim = 2 * n_patch
+
+    # Determine number of ramp coefficients
+    dim_ramp = 0
+    if len(ramp_matrix) > 0:
+        dim_ramp += ramp_matrix.shape[1]
+
+    n_dim = n_fault_dim + dim_ramp
+
+    # -------------------------- Prepare NIF objects --------------------------
+    # Prepare data
+    samp_file = f'cutoff={resolution_threshold:.1e}_wmin={width_min:.2f}_wmax={width_max:.2f}_max_int_w={max_intersect_width:.1f}_min_fdist={min_fault_dist:.2f}_max_it={max_iter:0f}'
+    d, std    = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_fault_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{dataset_name}/{samp_file}.h5')
+
+    print(f'Number of fault elements: {n_patch}')
+    print(f'Number of data points:    {n_data}')
+    print(f'Number of observations:   {n_obs}')
+    print(f'Number of dimensions:     {n_dim}')
+    
+    # Get Greens Functions
+    G = -fault.greens_functions(inputs[dataset_name].tree.x, inputs[dataset_name].tree.y, disp_components=disp_components, slip_components=slip_components, rotation=avg_strike, squeeze=True)
+    
     # Define covariance matrices
     if estimate_covariance:
         pyffit.covariance.estimate(x, y, fault, dataset, mask_dists, n_samp=n_samp, r_inc=r_inc, r_max=r_max, mask_dir=mask_dir, cov_dir=cov_dir, m0=m0, c_max=c_max, sv_max=sv_max,)
@@ -1818,32 +1823,11 @@ def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigm
     # -------------------- Run NIF --------------------
     # # 1) Perform forward Kalman filtering
     model, resid, rms = kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir=result_dir, steady_slip=steady_slip, ramp_matrix=ramp_matrix, constrain=constrain, state_lim=state_lim, cost_function=cost_function, file_name=f'{result_dir}/results_forward.h5')
-    # write_kalman_filter_results(model, resid, rms, x_f=x_f, x_a=x_a, P_f=P_f, P_a=P_a, backward_smoothing=False, file_name=f'{result_dir}/results_forward.h5')
-    # results_forward = read_kalman_filter_results(f'{result_dir}/results_forward.h5')
-
     with h5py.File(f'{result_dir}/results_forward.h5', 'r') as file:
         x_model_forward = file['x_a'][()]
 
-    # Form transition matrix T
-    # T = make_transition_matrix(n_patch, -dt, steady_slip=steady_slip)
-    
-    # Form process covariance matrix Q
-    # Q = make_process_covariance_matrix(n_patch, -dt, omega)
-
-    # Perform backward smooothing
-    # Update input objects using forward pass results
-    # d      = d[::-1, :] # Reverse time
-    # x_init = results_forward.x_a[-1, :]    # Use final state estimate as initial state
-    # P_init = results_forward.P_a[-1, :, :] # Use final covariance estimate as initial state covariance
-
-    # Clear memory before proceding
-    # del results_forward
-    gc.collect()
-
     # Perform backward smoothing
-    # results_smoothing = kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, constrain=constrain, state_lim=state_lim, cost_function=cost_function, backward_smoothing=True)
-    # results_smoothing = backward_smoothing(results_forward.x_f, results_forward.x_a, results_forward.P_f, results_forward.P_a, d, dt, G, L, T,constrain=constrain, state_lim=state_lim, cost_function=cost_function)
-    model, resid, rms, x_s, P_s = backward_smoothing(f'{result_dir}/results_forward.h5', d, dt, G, L, T, steady_slip=steady_slip, constrain=constrain, state_lim=state_lim, cost_function=cost_function)
+    model, resid, rms, x_s, P_s = backward_smoothing(f'{result_dir}/results_forward.h5', d, dt, G, L, T, steady_slip=steady_slip, ramp_matrix=ramp_matrix, constrain=constrain, state_lim=state_lim, cost_function=cost_function)
     write_kalman_filter_results(model, resid, rms, x_s=x_s, P_s=P_s, backward_smoothing=True, file_name=f'{result_dir}/results_smoothing.h5',)
     x_model_smoothing = x_s
     gc.collect()
@@ -1873,14 +1857,20 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir='.', state_li
     """
 
     # ---------- Kalman Filter ---------- 
-    n_dim   = x_init.size
+    n_dim = x_init.size
+
+    # Determine number of ramp coefficients
+    dim_ramp = 0
+    if len(ramp_matrix) > 0:
+        dim_ramp += ramp_matrix.shape[1]
+
     if steady_slip:
-        n_patch = x_init.size//3
+        n_patch = (x_init.size - dim_ramp)//3
     else:
-        n_patch = x_init.size//2
+        n_patch = (x_init.size - dim_ramp)//2
 
     n_obs   = d.shape[0]
-    n_data  = d.shape[1] - n_dim
+    n_data  = d.shape[1] - n_dim + dim_ramp
     slip_start = steady_slip * n_patch  # Get start of transient slip
     
     x_f     = np.empty((n_obs, n_dim))        # forecasted states
@@ -1890,8 +1880,6 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir='.', state_li
     model   = np.empty((n_obs, n_data))
     resid   = np.empty((n_obs, n_data))
     rms     = np.empty((n_obs,))
-
-    print()
 
     if backward_smoothing:
         print('############### Running Kalman filter in backward mode ###############')
@@ -1979,7 +1967,7 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir='.', state_li
         # Constrain state estimate 
         start_opt = time.time()
         end_opt = 0
-        
+
         print(f'State range: {x_a[k, :].min():.2f} - {x_a[k, :].max():.2f}')
 
         if len(state_lim) == n_dim:
@@ -2250,7 +2238,7 @@ def sqrt_update(H, R, y, x_f, P_f, get_S_c=False):
         return x_a, P_a, z
 
 
-def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, constrain=False, state_lim=[], cost_function='state', rcond=1e-15,):
+def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, ramp_matrix=[], constrain=False, state_lim=[], cost_function='state', rcond=1e-15,):
     """
     Dimensions:
     n_obs  - # of time points
@@ -2274,11 +2262,18 @@ def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, constrain
     # Get lengths
     n_obs   = x_f.shape[0]
     n_dim   = x_f.shape[1]
+
+    # Determine number of ramp coefficients
+    dim_ramp = 0
+    if len(ramp_matrix) > 0:
+        dim_ramp += ramp_matrix.shape[1]
+
     if steady_slip:
-        n_patch = n_dim//3
+        n_patch = (n_dim - dim_ramp)//3
     else:
-        n_patch = n_dim//2    
-    n_data  = d.shape[1] - n_dim
+        n_patch = (n_dim - dim_ramp)//2
+
+    n_data  = d.shape[1] - n_dim + dim_ramp 
     slip_start = steady_slip * n_patch # Get start of transient slip
     
     # Initialize
@@ -2298,6 +2293,26 @@ def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, constrain
     for k in reversed(range(0, n_obs - 1)):
         print(f'\n##### Working on Step {k} #####')
         
+        # P_f_c = cholesky(file['P_f'][k + 1, :, :], lower=False)
+        # y = x_s[k + 1, :] - x_f[k + 1, :]
+
+        # tmp = solve_triangular(P_f_c, y.T, lower=True)
+        # tmp = solve_triangular(P_f_c.T, tmp, lower=False)
+        # x_s[k, :] = x_a[k, :] + file['P_a'][k, :, :] @ T.T @ tmp
+
+
+        # C = (P_s[k + 1, :, :] - file['P_f'][k + 1, :, :])
+
+        # BFt = file['P_a'][k, :] @ T.T
+
+        # tmp = solve_triangular(P_f_c,   C,     lower=True)
+        # tmp = solve_triangular(P_f_c.T, tmp.T, lower=False).T
+        # tmp = solve_triangular(P_f_c,   tmp,   lower=True)
+        # tmp = solve_triangular(P_f_c.T, tmp.T, lower=False).T
+
+        # P_s[k, :, :] = file['P_a'][k, :] + BFt @ tmp @ BFt.T
+
+        
         # Compute smoothing matrix S
         P_f_inv = np.linalg.pinv(file['P_f'][k + 1, :, :], hermitian=True, rcond=rcond)
         S[k, :, :] = file['P_a'][k, :, :] @ T.T @ P_f_inv
@@ -2312,7 +2327,7 @@ def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, constrain
         
         if len(state_lim) == n_dim:
             
-            H = make_observation_matrix(G, L, t=dt*k, steady_slip=steady_slip)
+            H = make_observation_matrix(G, L, t=dt*k, steady_slip=steady_slip, ramp_matrix=ramp_matrix)
 
             bounds_flag = False
             
@@ -2388,7 +2403,7 @@ def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, constrain
                 end_opt = 0
 
     for k in range(n_obs):
-        H = make_observation_matrix(G, L, t=dt*k, steady_slip=steady_slip)
+        H = make_observation_matrix(G, L, t=dt*k, steady_slip=steady_slip, ramp_matrix=ramp_matrix)
 
         # Compute error terms
         pred        = H @ x_s[k, :]
