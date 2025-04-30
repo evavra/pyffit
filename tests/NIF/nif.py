@@ -777,7 +777,7 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
     A = np.array([(slip_history[k + 1, :, :] - slip_history[k - 1, :, :])/(2*dt) for k in range(1, len(slip_history) - 1)])
     slip_rate_history[1:-1, :, :] = A
 
-    summary_plots = False
+    summary_plots = True
     if summary_plots:
         # -------------------- Plot history --------------------
         dpi    = 300
@@ -983,7 +983,7 @@ def analyze_model(mesh_file, triangle_file, file_format, downsampled_dir, out_di
         del pool
         del results
         gc.collect()
-
+    
     # Rotate data so fault is horizontal
     fault_r        = copy.deepcopy(fault)
     x_r, y_r       = pyffit.utilities.rotate(inputs[dataset_name].tree.x, inputs[dataset_name].tree.y, np.deg2rad(avg_strike + 90))
@@ -1161,6 +1161,7 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     # ------------------ Prepare run directories and files ------------------
     date    = datetime.datetime.today().strftime('%Y%m%d_%H%M%S')
     run_dir = f'{out_dir}/omega_{omega:.1e}__kappa_{kappa:.1e}__sigma_{sigma:.1e}'
+
     pyffit.utilities.check_dir_tree(run_dir)
     pyffit.utilities.check_dir_tree(run_dir + '/Scripts/' + date)
 
@@ -1178,7 +1179,6 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     shutil.copy(param_file, f'{run_dir}/Scripts/{date}/params_{date}.py')
     
     print(f'Run directory: {run_dir}')
-
 
     # -------------------------- Prepare original data --------------------------    
     # Load fault model and regularization matrices
@@ -1255,8 +1255,7 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
 
     n_dim = n_fault_dim + dim_ramp
 
-    # -------------------------- Prepare NIF objects --------------------------
-    # Prepare data
+    # -------------------- Prepare data --------------------
     samp_file = f'cutoff={resolution_threshold:.1e}_wmin={width_min:.2f}_wmax={width_max:.2f}_max_int_w={max_intersect_width:.1f}_min_fdist={min_fault_dist:.2f}_max_it={max_iter:0f}'
     d, std    = pyffit.quadtree.get_downsampled_time_series(datasets, inputs, fault, n_fault_dim, dataset_name=dataset_name, file_name=f'{downsampled_dir}/{dataset_name}/{samp_file}.h5')
 
@@ -1265,14 +1264,63 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
     print(f'Number of observations:   {n_obs}')
     print(f'Number of dimensions:     {n_dim}')
     
-    # Get Greens Functions
+    # -------------------- Greens Functions --------------------
     G = -fault.greens_functions(inputs[dataset_name].tree.x, inputs[dataset_name].tree.y, disp_components=disp_components, slip_components=slip_components, rotation=avg_strike, squeeze=True)
     
-    # Define covariance matrices
+    # -------------------- Data covariance --------------------
     if estimate_covariance:
-        pyffit.covariance.estimate(x, y, fault, dataset, mask_dists, n_samp=n_samp, r_inc=r_inc, r_max=r_max, mask_dir=mask_dir, cov_dir=cov_dir, m0=m0, c_max=c_max, sv_max=sv_max,)
+        # Get mask distance
+        mask_dist = mask_dists[0]
+
+        # Get inter-cell distances
+        dist_file = f'{quadtree_dir}/dist.h5'
+
+        if os.path.exists(dist_file):
+            with h5py.File(dist_file, 'r') as file:                
+                dist = file['dist'][()]
+
+        else:
+            print('Computing cell distances...')
+            # Compute distances
+            dist = np.empty((n_data, n_data))
+
+            for i in range(n_data):
+                for j in range(n_data):
+                    dist[i, j] = pyffit.covariance.dist(tree.x[i], tree.x[j], tree.y[i], tree.y[j])
+            
+            # Write to disk
+            with h5py.File(dist_file, 'w') as file:                
+                file.create_dataset('dist', data=dist)
+
+        # Get covariance model
+        sv_file  = f'{cov_dir}/semivariogram_params.h5' # parameters for covariance model for each observation
+        cov_file = f'{quadtree_dir}/covariance.h5'      # modeled covariance matrices for each observation
+        R_file   = f'{run_dir}/R.h5'                    # complete data covariance matrix for each observation 
+
+        if not os.path.exists(sv_file):
+            pyffit.covariance.estimate(x, y, fault, dataset, mask_dists, n_samp=n_samp, r_inc=r_inc, r_max=r_max, mask_dir=mask_dir, cov_dir=cov_dir, m0=m0, c_max=c_max, sv_max=sv_max,)
+
+        # Compute covariance matrices
+        if not os.path.exists(cov_file):
+            with h5py.File(cov_file, 'w') as out_file: 
+                with h5py.File(sv_file, 'r') as file:  
+                    for k, date in enumerate(dataset.date):
+                        date = date.dt.strftime('%Y-%m-%d')
+                        print(f'Working on {date}...')
+                        
+                        # Get semivariogram parameters
+                        key = f'mask_dist_{mask_dist}_km/{date}'
+                        sv_params = file[key][()]
+
+                        # Compute semivariance and covariance
+                        sv_model = pyffit.covariance.exp_semivariogram(sv_params[0], sv_params[1], sv_params[2], dist)
+                        c_model  = sv_params[0] + sv_params[1] - sv_model
+                        out_file.create_dataset(f'covariance/{k}', data=c_model) 
+
     else:
         C = np.eye(inputs[dataset_name].tree.x.size)
+        with h5py.File(cov_file, 'w') as out_file: 
+            out_file.create_dataset(f'covariance', data=C) 
 
     # Set up model bounds and initial uncertainties
     if steady_slip:
@@ -1287,10 +1335,10 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
         state_sigmas.append(ramp_sigma)
 
     # Get bounds on model parameters
-    state_lim = get_state_constraints(fault, state_lims)
+    state_lim = get_state_constraints(fault, state_lims, ramp_matrix=ramp_matrix)
 
     # Perform forward Kalman filtering
-    x_model_forward, x_model = network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigmas, steady_slip=steady_slip, ramp_matrix=ramp_matrix, rho=rho, constrain=constrain, state_lim=state_lim, result_dir=run_dir, cost_function='state')
+    x_model_forward, x_model = network_inversion_filter(fault, G, d, std, dt, omega, sigma, kappa, state_sigmas, cov_file=cov_file, steady_slip=steady_slip, ramp_matrix=ramp_matrix, rho=rho, constrain=constrain, state_lim=state_lim, result_dir=run_dir, cost_function='state')
 
     # Compute integrated slip
     if steady_slip:
@@ -1771,7 +1819,7 @@ def display_top(snapshot, key_type='lineno', limit=3):
 
 
 # ------------------ NIF ------------------
-def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigmas, steady_slip=False, rho=1, ramp_matrix=[], constrain=False, state_lim=[], result_dir='.', cost_function='state'):
+def network_inversion_filter(fault, G, d, std, dt, omega, sigma, kappa, state_sigmas, cov_file='covariance.h5', steady_slip=False, rho=1, ramp_matrix=[], constrain=False, state_lim=[], result_dir='.', cost_function='state'):
     """
     Invert time series of surface displacements for fault slip.
     Based on the method of Bekaert et al. (2016)
@@ -1812,7 +1860,7 @@ def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigm
     Q = make_process_covariance_matrix(n_patch, dt, omega, steady_slip=steady_slip, ramp_matrix=ramp_matrix, rho=rho)
 
     # Form data covariance matrix R
-    R = make_data_covariance_matrix(C, n_patch, sigma, kappa, steady_slip=steady_slip)
+    # R = make_data_covariance_matrix(C, n_patch, sigma, kappa, steady_slip=steady_slip)
 
     # Define initial state vector
     x_init = np.zeros(n_dim)
@@ -1822,7 +1870,7 @@ def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigm
 
     # -------------------- Run NIF --------------------
     # # 1) Perform forward Kalman filtering
-    model, resid, rms = kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir=result_dir, steady_slip=steady_slip, ramp_matrix=ramp_matrix, constrain=constrain, state_lim=state_lim, cost_function=cost_function, file_name=f'{result_dir}/results_forward.h5')
+    model, resid, rms = kalman_filter(x_init, P_init, d, std, dt, G, L, T, Q, sigma=sigma, kappa=kappa, cov_file=cov_file, result_dir=result_dir, steady_slip=steady_slip, ramp_matrix=ramp_matrix, constrain=constrain, state_lim=state_lim, cost_function=cost_function, file_name=f'{result_dir}/results_forward.h5')
     with h5py.File(f'{result_dir}/results_forward.h5', 'r') as file:
         x_model_forward = file['x_a'][()]
 
@@ -1831,8 +1879,6 @@ def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigm
     write_kalman_filter_results(model, resid, rms, x_s=x_s, P_s=P_s, backward_smoothing=True, file_name=f'{result_dir}/results_smoothing.h5',)
     x_model_smoothing = x_s
     gc.collect()
-    # del results_smoothing
-    # gc.collect()
 
     # results_smoothing = backward_smoothing(results_forward.x_f, results_forward.x_a, results_forward.P_f, results_forward.P_a, d, dt, G, L, T, 
                                         #    state_lim=state_lim, cost_function='state')
@@ -1840,8 +1886,8 @@ def network_inversion_filter(fault, G, d, C, dt, omega, sigma, kappa, state_sigm
     return x_model_forward, x_model_smoothing
 
 
-def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir='.', state_lim=[], ramp_matrix=[], steady_slip=False, constrain=False, cost_function='state', 
-                  backward_smoothing=False, rcond=1e-8, overwrite=True, file_name='results_forward.h5'):
+def kalman_filter(x_init, P_init, d, std, dt, G, L, T, Q, sigma=1, kappa=1, cov_file='covariance.h5', result_dir='.', state_lim=[], ramp_matrix=[], steady_slip=False, constrain=False, cost_function='state', 
+                  backward_smoothing=False, overwrite=True, file_name='results_forward.h5'):
     """
     INPUT:
     x_init (n_dim,)     - intial state (n_dim - # of model parameters) 
@@ -1858,6 +1904,8 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir='.', state_li
 
     # ---------- Kalman Filter ---------- 
     n_dim = x_init.size
+
+    covariance = h5py.File(cov_file, 'r')
 
     # Determine number of ramp coefficients
     dim_ramp = 0
@@ -1894,9 +1942,35 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir='.', state_li
 
         # Update observation matrix H        
         start_H = time.time()
-        H = make_observation_matrix(G, L, t=dt*k, steady_slip=steady_slip, ramp_matrix=ramp_matrix)
-        end_H = time.time() - start_H
+        H       = make_observation_matrix(G, L, t=dt*k, steady_slip=steady_slip, ramp_matrix=ramp_matrix)
+        end_H   = time.time() - start_H
         print(f'H-matrix time: {end_H:.2f} s')
+
+        # Update data covariance matrix R
+        # R = make_data_covariance_matrix(C, n_patch, sigma, kappa, steady_slip=steady_slip)
+        
+        # Check for positive definiteness --  use next R if 
+        # C = covariance[f'covariance/{k}'][()]
+        # C = np.eye((n_data))
+        var = np.mean(std, axis=0)**2
+        var[var == 0] = 1
+        C = np.diag(var)
+        
+        # fig, ax = plt.subplots(figsize=(6, 6))
+        # # ax.set_title(r'$\sigma$' + f' = {sigma:.1e}, ' + r'$\kappa$' + f' = {kappa:.1e}')
+        # im = ax.imshow(C, cmap=cmc.hawaii, interpolation='none')
+        # plt.colorbar(im)
+        # plt.savefig(f'{result_dir}/Results/Matrices/C_{k}.png')
+        # plt.close()
+
+        # sigma = 1e-4
+        R = make_data_covariance_matrix(C, n_patch, sigma, kappa, steady_slip=steady_slip)
+
+        if not np.all(np.linalg.eigvals(R) > 0):
+            print('Using next R')
+            # C = covariance[f'covariance/{k + 1}'][()]
+            C = np.diag(std[k + 1, :]**2)
+            R = make_data_covariance_matrix(C, n_patch, sigma, kappa, steady_slip=steady_slip)
 
         # 1) ---------- Forecast ----------
         # Make forecast 
@@ -1921,16 +1995,30 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir='.', state_li
         end_forecast = time.time() - start_forecast
         print(f'Forecast time: {end_forecast:.2f} s')
 
+
+        
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.set_title(r'$\sigma$' + f' = {sigma:.1e}, ' + r'$\kappa$' + f' = {kappa:.1e}')
+        im = ax.imshow(R, cmap=cmc.lajolla, interpolation='none')
+        plt.colorbar(im)
+        plt.savefig(f'{result_dir}/Results/Matrices/R_{k}.png')
+        plt.close()
+
+        fig, ax = plt.subplots(figsize=(6, 6))
+        ax.set_title(r'$\sigma$' + f' = {sigma:.1e}, ' + r'$\kappa$' + f' = {kappa:.1e}')
+        im = ax.imshow(H @ P_f[k, :, :] @ H.T, cmap=cmc.imola, interpolation='none')
+        plt.colorbar(im)
+        plt.savefig(f'{result_dir}/Results/Matrices/HPHt_{k}.png')
+        plt.close()
+
+
         # 2) ---------- Analysis ----------
         start_analysis = time.time()
+
         # # Get Kalman gain
         # HPfH = H @ P_f[k, :, :] @ H.T 
         # HPfH_R = HPfH + R
-
-        start_pinv = time.time()
         # HPfHT_inv = np.linalg.pinv(HPfH_R, hermitian=True, rcond=rcond)
-        end_pinv = time.time() - start_pinv
-        # print(f'HPfHT_inv time: {end_pinv:.2f} s')
 
         # # Get Kalman gain
         # K = P_f[k, :, :] @ H.T @ HPfHT_inv 
@@ -1938,17 +2026,8 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir='.', state_li
         # # Update state and covariance        
         # x_a[k, :]      = x_f[k, :] + K @ (d[k, :] - H @ x_f[k, :])
         # P_a[k, :, :]   = P_f[k, :, :] - K @ H @ P_f[k, :, :]
-
         x_a[k, :], P_a[k, :, :], z = sqrt_update(H, R, d[k, :], x_f[k, :], P_f[k, :, :])
-
-        # print()
-        # print(f'P_f:       {np.abs(P_f[k, :, :]).min():.2f} {np.abs(P_f[k, :, :]).max():.2f}')
-        # print(f'H:         {np.abs(H).min():.2f} {np.abs(H).max():.2f}')
-        # print(f'HPfHT_inv: {np.abs(HPfHT_inv).min():.2f} {np.abs(HPfHT_inv).max():.2f}')
-        # print(f'K:         {np.abs(K).min():.2f} {np.abs(K).max():.2f}')
-        # print()
-
-        end_analysis   = time.time() - start_analysis
+        end_analysis = time.time() - start_analysis
         print(f'Analysis time: {end_forecast:.2f} s')
     
         start_plot = time.time()
@@ -1968,8 +2047,9 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir='.', state_li
         start_opt = time.time()
         end_opt = 0
 
-        print(f'State range: {x_a[k, :].min():.2f} - {x_a[k, :].max():.2f}')
-
+        print(f'Forecasted state range: {x_f[k, :].min():.2f} - {x_f[k, :].max():.2f}')
+        print(f'Updated state range:    {x_a[k, :].min():.2f} - {x_a[k, :].max():.2f}')
+        
         if len(state_lim) == n_dim:
 
             bounds_flag = False
@@ -2015,7 +2095,6 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir='.', state_li
                         # constraints = (
                         #                 {'type': 'ineq', 'fun': lambda x: x[slip_start:slip_start + n_patch] - x_a[k - 1, slip_start:slip_start +n_patch]}, # W_k - W_k-1 >= 0
                         #                 )
-
 
                         # Supply element-wise constraints on transient slip
                         constraints = []
@@ -2068,9 +2147,9 @@ def kalman_filter(x_init, P_init, d, dt, G, L, T, R, Q, result_dir='.', state_li
         rms[k]      = np.sqrt(np.mean(resid[k, :]**2))  
 
         end_step = time.time() - start_step
-        print(f'Step {k} time: {end_step:.2f} s (inv: {end_pinv/end_step * 100:.1f} %, opt: {end_opt/end_step * 100:.1f} %, other: {(end_step - end_pinv - end_opt)/end_step * 100:.1f} %)')
+        print(f'Step {k} time: {end_step:.2f} s (update: {end_analysis/end_step * 100:.1f} %, opt: {end_opt/end_step * 100:.1f} %, other: {(end_step - end_opt)/end_step * 100:.1f} %)')
 
-
+    covariance.close()
     end_total = time.time() - start_total
 
     if backward_smoothing:
@@ -2199,11 +2278,10 @@ def sqrt_update(H, R, y, x_f, P_f, get_S_c=False):
     R_c   = cholesky(R, lower=False)
     P_f_c = cholesky(P_f, lower=False)
     zeros = np.zeros((n, m))
-    C     = P_f_c @ H.T 
 
     # Form block matrix A
     A = np.block([[R_c, zeros], 
-                  [C,   P_f_c]])
+                  [P_f_c @ H.T ,   P_f_c]])
 
     # Perform QR decomposition on A
     P_a_c = qr(A, mode='r')[0]
@@ -2845,7 +2923,7 @@ def make_process_covariance_matrix(n_patch, dt, omega, steady_slip=True, ramp_ma
     return Q
 
 
-def make_data_covariance_matrix(C, n_patch, sigma, kappa, steady_slip=False):
+def make_data_covariance_matrix(C, n_patch, sigma, kappa, steady_slip=False, tol=1e-20):
     """
     Form data covariance matrix R from observation covariance matrix C, data covariance weight sigma, and spatial smoothing weight kappa.
     """
@@ -2858,12 +2936,15 @@ def make_data_covariance_matrix(C, n_patch, sigma, kappa, steady_slip=False):
     n_data = len(C)
 
     # Form base matrices
-    I       = np.eye(n_patch)
+    I = np.eye(n_patch)
 
     # Form R matrix
     R = np.eye((n_data + n_dim))
     R[:n_data, :n_data]  = sigma**2 * C
     R[n_data:, n_data:] *= kappa**2
+
+    # Force small values to zero to ensure positive definite
+    R[np.abs(R) < tol] = 0
 
     # zeros_I = np.zeros_like(I)
     # zeros_CI = np.zeros((C.shape[0], n_patch))
@@ -2943,17 +3024,27 @@ def integrate_slip(x, dt):
     return s
     
 
-def get_state_constraints(fault, bounds):
+def get_state_constraints(fault, bounds, ramp_matrix=[]):
     """
     Map supplied parameter bounds to the dimensions of the state vector.
     Typically bounds will consist of [v_lim, W_lim, W_dot_lim].
     Note that len(fault.patches) * len(bounds) should equal len(x) (or, n_dim).
     """
+    # Get number of ramp parameters
+    dim_ramp = 0 
+    use_ramp = len(ramp_matrix) > 0
+
+    if use_ramp:
+        dim_ramp += ramp_matrix.shape[1]
+
     state_lim = []
-    for i in range(len(bounds)):
+
+    for i in range(len(bounds) - use_ramp):
         for j in range(len(fault.patches)):
             state_lim.append(bounds[i])
-
+    
+    for k in range(dim_ramp):
+        state_lim.append(bounds[-1])
     return state_lim
 
 
