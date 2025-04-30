@@ -12,8 +12,9 @@ import cmcrameri.cm as cmc
 # -------------------------- Required parameters --------------------------
 # Run mode(s)
 # mode = ['downsample'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
-# mode = ['NIF', 'analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
-mode = ['analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both                    
+# mode = ['NIF'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
+mode = ['NIF', 'analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
+# mode = ['analyze_model'] # 'NIF' to run inversion, 'analyze' to make figures, or both                    
 # mode = ['analyze_disp'] # 'NIF' to run inversion, 'analyze' to make figures, or both             
 
 # Files and directories
@@ -53,7 +54,7 @@ mask_dir   = '/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/masks/'
 cov_dir    = '/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/covariance/'
 
 # Covariance estimation parameters
-estimate_covariance = False
+estimate_covariance = True
 mask_dists          = [3]
 n_samp              = 2*10**7
 r_inc               = 0.2
@@ -88,7 +89,7 @@ edge_slip_samp       = False
 
 # NIF parameters
 omega           = 1e4   # temporal smoothing hyperparameter
-kappa           = 1e-1  # spatial smoothing hyperparameter
+kappa           = 5e-1  # spatial smoothing hyperparameter
 sigma           = 1e0   # data covariance scaling hyperparameter 
 rho             = 1e0   # ramp covariance scaling hyperparameter 
 

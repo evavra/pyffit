@@ -111,9 +111,10 @@ ylim       = [-26.75029172, 55.08597388]
 vlim_slip  = [0, 40]
 vlim_disp  = [[-20, 20],
               [-20, 20],
+              [-20, 20],
               [-20, 20]] 
 cmap_disp  = cmc.vik
-cmap_slip  = cmc.lajolla_r
+cmap_slip  = cmc.lajolla
 figsize    = (10, 7)
 dpi        = 75
 markersize = 40
