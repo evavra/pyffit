@@ -1229,3 +1229,44 @@ def get_state_constraints(fault, bounds, ramp_matrix=[]):
         state_lim.append(bounds[-1])
     return state_lim
 
+# ------------------ Classes ------------------
+class KalmanFilterResults:
+
+    """
+    Object containing results of a Kalman filtering procedure.
+
+    ATTRIBUTES:
+    x_f, x_a, x_s (n_obs, n_dim)        - forecasted, analyzed, and smoothed state vectors
+    P_f, P_a, x_s (n_obs, n_dim, n_dim) - forecasted, analyzed, and smoothed covariance matrices
+    resid (n_obs, n_data)          - model misfits at each time step
+    rms (n_obs,)                   - RMS error after analysis at each time step
+    """
+
+    def __init__(self, model, resid, rms, x_f=[], x_a=[], P_f=[], P_a=[], x_s=[], P_s=[], backward_smoothing=False):
+        """
+        Set attributes.
+        """
+        
+        self.backward_smoothing = backward_smoothing
+
+        if backward_smoothing:
+            # self.x_s   = x_s[::-1, :]
+            # self.P_s   = P_s[::-1, :]
+            # self.model = model[::-1, :]
+            # self.resid = resid[::-1]
+            # self.rms   = rms[::-1]
+            self.x_s   = x_s
+            self.P_s   = P_s
+            self.model = model
+            self.resid = resid
+            self.rms   = rms
+        else:
+            self.x_f   = x_f
+            self.x_a   = x_a
+            self.P_f   = P_f
+            self.P_a   = P_a
+
+            self.model = model
+            self.resid = resid
+            self.rms   = rms
+
