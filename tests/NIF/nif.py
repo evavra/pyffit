@@ -1269,64 +1269,64 @@ def run_nif(mesh_file, triangle_file, file_format, downsampled_dir, out_dir, dat
 
 
 
-    cov_file = f'{quadtree_dir}/covariance.h5'      # modeled covariance matrices for each observation
-    dist_file = f'{quadtree_dir}/dist.h5'
+    # cov_file = f'{quadtree_dir}/covariance.h5'      # modeled covariance matrices for each observation
+    # dist_file = f'{quadtree_dir}/dist.h5'
 
-    k = 204
-    trunc = 100
-    dist_max = 20
-    with h5py.File(cov_file, 'r') as covariance:
-        with h5py.File(dist_file, 'r') as file:                
-            dist = file['dist'][()]
+    # k = 204
+    # trunc = 100
+    # dist_max = 20
+    # with h5py.File(cov_file, 'r') as covariance:
+    #     with h5py.File(dist_file, 'r') as file:                
+    #         dist = file['dist'][()]
             
-            C = covariance[f'covariance/{k}'][()]
-            C_trunc = np.zeros_like(C)
-            n_data = C.shape[0]
+    #         C = covariance[f'covariance/{k}'][()]
+    #         C_trunc = np.zeros_like(C)
+    #         n_data = C.shape[0]
 
-            # C_trunc[dist <= dist_max] = C[dist <= dist_max]
-            C_trunc = C.max() * (C - C.min())/(C.max() - C.min())
+    #         # C_trunc[dist <= dist_max] = C[dist <= dist_max]
+    #         C_trunc = C.max() * (C - C.min())/(C.max() - C.min())
 
-            std_norm = std[k, :]
-            std_norm[std_norm < 1] = 1
+    #         std_norm = std[k, :]
+    #         std_norm[std_norm < 1] = 1
 
-            C_std = np.eye(n_data) * std_norm ** 2
+    #         C_std = np.eye(n_data) * std_norm ** 2
             
-            print(f'C       condition number: {np.linalg.cond(C)}')
-            print(f'C_std   condition number: {np.linalg.cond(C_std)}')
-            print(f'C_trunc condition number: {np.linalg.cond(C_trunc)}')
+    #         print(f'C       condition number: {np.linalg.cond(C)}')
+    #         print(f'C_std   condition number: {np.linalg.cond(C_std)}')
+    #         print(f'C_trunc condition number: {np.linalg.cond(C_trunc)}')
 
-    # Create figure and GridSpec layout
-    fig = plt.figure(figsize=(14, 8), constrained_layout=True)
-    gs = gridspec.GridSpec(2, 3, height_ratios=[1, 0.05], hspace=0.1)
+    # # Create figure and GridSpec layout
+    # fig = plt.figure(figsize=(14, 8), constrained_layout=True)
+    # gs = gridspec.GridSpec(2, 3, height_ratios=[1, 0.05], hspace=0.1)
 
-    # Top row: image plots
-    ax0  = fig.add_subplot(gs[0, 0])
-    ax1  = fig.add_subplot(gs[0, 1])
-    ax2  = fig.add_subplot(gs[0, 2])
-    cax0 = fig.add_subplot(gs[1, 1])
-    cax1 = fig.add_subplot(gs[1, 2])
+    # # Top row: image plots
+    # ax0  = fig.add_subplot(gs[0, 0])
+    # ax1  = fig.add_subplot(gs[0, 1])
+    # ax2  = fig.add_subplot(gs[0, 2])
+    # cax0 = fig.add_subplot(gs[1, 1])
+    # cax1 = fig.add_subplot(gs[1, 2])
 
-    # Display the images with shared color limits
-    vmin = 0
-    vmax = np.max(C)
+    # # Display the images with shared color limits
+    # vmin = 0
+    # vmax = np.max(C)
 
-    im0 = ax0.imshow(C,       vmin=vmin, vmax=vmax,     interpolation='none', cmap=cmc.lajolla)
-    im1 = ax1.imshow(C_trunc, vmin=vmin, vmax=vmax,     interpolation='none', cmap=cmc.lajolla)
-    im2 = ax2.imshow(C_std,   vmin=vmin,                interpolation='none', cmap=cmc.lajolla)
-    # im2 = ax2.imshow(dist,   vmin=vmin, vmax=dist_max,  interpolation='none', cmap=cmc.imola)
+    # im0 = ax0.imshow(C,       vmin=vmin, vmax=vmax,     interpolation='none', cmap=cmc.lajolla)
+    # im1 = ax1.imshow(C_trunc, vmin=vmin, vmax=vmax,     interpolation='none', cmap=cmc.lajolla)
+    # im2 = ax2.imshow(C_std,   vmin=vmin,                interpolation='none', cmap=cmc.lajolla)
+    # # im2 = ax2.imshow(dist,   vmin=vmin, vmax=dist_max,  interpolation='none', cmap=cmc.imola)
 
-    ax0.set_title(r'$C$ condition number: ' + f'{np.linalg.cond(C):.0f}')
-    ax1.set_title(r'$C_{trunc}$ condition number: ' + f'{np.linalg.cond(C_trunc):.0f}')
-    # ax2.set_title(r'Distance')
-    ax2.set_title(r'$C_{std}$ condition number: ' + f'{np.linalg.cond(C_std):.0f}')
+    # ax0.set_title(r'$C$ condition number: ' + f'{np.linalg.cond(C):.0f}')
+    # ax1.set_title(r'$C_{trunc}$ condition number: ' + f'{np.linalg.cond(C_trunc):.0f}')
+    # # ax2.set_title(r'Distance')
+    # ax2.set_title(r'$C_{std}$ condition number: ' + f'{np.linalg.cond(C_std):.0f}')
 
-    # Bottom row: shared colorbar spanning both columns
-    fig.colorbar(im1, label=r'Covaraince(mm$^2$)', cax=cax0, orientation='horizontal', shrink=0.3)
-    fig.colorbar(im2, label=r'Distance (km)', cax=cax1, orientation='horizontal', shrink=0.3)
+    # # Bottom row: shared colorbar spanning both columns
+    # fig.colorbar(im1, label=r'Covaraince(mm$^2$)', cax=cax0, orientation='horizontal', shrink=0.3)
+    # fig.colorbar(im2, label=r'Distance (km)', cax=cax1, orientation='horizontal', shrink=0.3)
 
-    plt.show()
+    # plt.show()
 
-    sys.exit(1)
+    # sys.exit(1)
 
 
 
