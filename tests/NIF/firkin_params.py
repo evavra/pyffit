@@ -42,8 +42,8 @@ data_factor           = 1    # Convert from cm to desired units
 # mask_file           = '/Users/evavra/Software/pyffit/tests/NIF/synthetic_data_full/decorr_mask.grd'
 model_file = ''
 mask_file  = ''
-mask_dir   = '/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/masks/'
-cov_dir    = '/Users/evavra/Projects/SSAF/Analysis/Time_Series/NIF/covariance/'
+mask_dir   = '/raid/class239/ellis/SSAF/NIF/masks'
+cov_dir    = '/raid/class239/ellis/SSAF/NIF/covariance'
 
 # Covariance estimation parameters
 estimate_covariance = False
