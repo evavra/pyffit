@@ -37,10 +37,10 @@ def network_inversion_filter(fault, G, d, std, dt, omega, sigma, kappa, state_si
         n_dim   = 2 * n_patch
 
     # Determine number of ramp coefficients
-    dim_ramp = 0
+    n_ramp = 0
     if len(ramp_matrix)> 0:
-        dim_ramp += ramp_matrix.shape[1]
-        n_dim    += dim_ramp
+        n_ramp += ramp_matrix.shape[1]
+        n_dim    += n_ramp
 
     # Form smoothing matrix S
     L = fault.smoothing_matrix
@@ -100,17 +100,17 @@ def kalman_filter(x_init, P_init, d, std, dt, G, L, T, Q, sigma=1, kappa=1, cov_
     covariance = h5py.File(cov_file, 'r')
 
     # Determine number of ramp coefficients
-    dim_ramp = 0
+    n_ramp = 0
     if len(ramp_matrix) > 0:
-        dim_ramp += ramp_matrix.shape[1]
+        n_ramp += ramp_matrix.shape[1]
 
     if steady_slip:
-        n_patch = (x_init.size - dim_ramp)//3
+        n_patch = (x_init.size - n_ramp)//3
     else:
-        n_patch = (x_init.size - dim_ramp)//2
+        n_patch = (x_init.size - n_ramp)//2
 
     n_obs   = d.shape[0]
-    n_data  = d.shape[1] - n_dim + dim_ramp
+    n_data  = d.shape[1] - n_dim + n_ramp
     slip_start = steady_slip * n_patch  # Get start of transient slip
     
     x_f     = np.empty((n_obs, n_dim))        # forecasted states
@@ -159,17 +159,14 @@ def kalman_filter(x_init, P_init, d, std, dt, G, L, T, Q, sigma=1, kappa=1, cov_
         # plt.savefig(f'{result_dir}/Results/Matrices/C_{k}.png')
         # plt.close()
 
-        # sigma = 1e-4
         R = make_data_covariance_matrix(C, n_patch, sigma, kappa, steady_slip=steady_slip)
 
         if not np.all(np.linalg.eigvals(R) > 0):
             print('Using next R')
             # C = covariance[f'covariance/{k + 1}'][()]
             C = np.diag(std[k + 1, :]**2)
-
             # C = covariance[f'covariance/{k + 1}'][()]
             # C_trunc = C.max() * (C - C.min())/(C.max() - C.min())
-
             R = make_data_covariance_matrix(C, n_patch, sigma, kappa, steady_slip=steady_slip)
 
         # 1) ---------- Forecast ----------
@@ -194,22 +191,20 @@ def kalman_filter(x_init, P_init, d, std, dt, G, L, T, Q, sigma=1, kappa=1, cov_
         
         end_forecast = time.time() - start_forecast
         print(f'Forecast time: {end_forecast:.2f} s')
-
-
         
-        fig, ax = plt.subplots(figsize=(6, 6))
-        ax.set_title(r'$\sigma$' + f' = {sigma:.1e}, ' + r'$\kappa$' + f' = {kappa:.1e}')
-        im = ax.imshow(R, cmap=cmc.lajolla, interpolation='none')
-        plt.colorbar(im)
-        plt.savefig(f'{result_dir}/Results/Matrices/R_{k}.png')
-        plt.close()
+        # fig, ax = plt.subplots(figsize=(6, 6))
+        # ax.set_title(r'$\sigma$' + f' = {sigma:.1e}, ' + r'$\kappa$' + f' = {kappa:.1e}')
+        # im = ax.imshow(R, cmap=cmc.lajolla, interpolation='none')
+        # plt.colorbar(im)
+        # plt.savefig(f'{result_dir}/Results/Matrices/R_{k}.png')
+        # plt.close()
 
-        fig, ax = plt.subplots(figsize=(6, 6))
-        ax.set_title(r'$\sigma$' + f' = {sigma:.1e}, ' + r'$\kappa$' + f' = {kappa:.1e}')
-        im = ax.imshow(H @ P_f[k, :, :] @ H.T, cmap=cmc.imola, interpolation='none')
-        plt.colorbar(im)
-        plt.savefig(f'{result_dir}/Results/Matrices/HPHt_{k}.png')
-        plt.close()
+        # fig, ax = plt.subplots(figsize=(6, 6))
+        # ax.set_title(r'$\sigma$' + f' = {sigma:.1e}, ' + r'$\kappa$' + f' = {kappa:.1e}')
+        # im = ax.imshow(H @ P_f[k, :, :] @ H.T, cmap=cmc.imola, interpolation='none')
+        # plt.colorbar(im)
+        # plt.savefig(f'{result_dir}/Results/Matrices/HPHt_{k}.png')
+        # plt.close()
 
 
         # 2) ---------- Analysis ----------
@@ -230,25 +225,25 @@ def kalman_filter(x_init, P_init, d, std, dt, G, L, T, Q, sigma=1, kappa=1, cov_
         end_analysis = time.time() - start_analysis
         print(f'Analysis time: {end_forecast:.2f} s')
     
-        start_plot = time.time()
-        vlim = np.max(abs(P_a[k, :, :]))
-        fig, axes = plt.subplots(1, 2, figsize=(6, 3))
-        im = axes[0].imshow(P_f[k, :, :], vmin=-vlim, vmax=vlim, cmap=cmc.vik, interpolation='none')
-        im = axes[1].imshow(P_a[k, :, :], vmin=-vlim, vmax=vlim, cmap=cmc.vik, interpolation='none')
-        axes[0].set_title(r'$P_f$')
-        axes[1].set_title(r'$P_a$')
-        fig.colorbar(im)
-        plt.savefig(f'{result_dir}/Results/Matrices/P_{k}.png', dpi=200)
-        plt.close()
-        end_plot = time.time() - start_plot
-        print(f'Ploting time: {end_plot:.2f}')
+        # start_plot = time.time()
+        # vlim = np.max(abs(P_a[k, :, :]))
+        # fig, axes = plt.subplots(1, 2, figsize=(6, 3))
+        # im = axes[0].imshow(P_f[k, :, :], vmin=-vlim, vmax=vlim, cmap=cmc.vik, interpolation='none')
+        # im = axes[1].imshow(P_a[k, :, :], vmin=-vlim, vmax=vlim, cmap=cmc.vik, interpolation='none')
+        # axes[0].set_title(r'$P_f$')
+        # axes[1].set_title(r'$P_a$')
+        # fig.colorbar(im)
+        # plt.savefig(f'{result_dir}/Results/Matrices/P_{k}.png', dpi=200)
+        # plt.close()
+        # end_plot = time.time() - start_plot
+        # print(f'Ploting time: {end_plot:.2f}')
 
         # Constrain state estimate 
         start_opt = time.time()
         end_opt = 0
 
-        print(f'Forecasted state range: {x_f[k, :].min():.2f} - {x_f[k, :].max():.2f}')
-        print(f'Updated state range:    {x_a[k, :].min():.2f} - {x_a[k, :].max():.2f}')
+        print(f'Forecasted state range:  {x_f[k, :].min():.2f} - {x_f[k, :].max():.2f}')
+        print(f'Updated state range:     {x_a[k, :].min():.2f} - {x_a[k, :].max():.2f}')
         
         if len(state_lim) == n_dim:
 
@@ -331,7 +326,7 @@ def kalman_filter(x_init, P_init, d, std, dt, G, L, T, Q, sigma=1, kappa=1, cov_
                     end_opt = 0
                     x_a[k, :] = x_0
 
-                print(f'Updated state range: {x_a[k, :].min():.2f} - {x_a[k, :].max():.2f}')
+                print(f'Constrained state range: {x_a[k, :].min():.2f} - {x_a[k, :].max():.2f}')
                 
             else:
                 print(f'Step {k} state is within bounds')
@@ -542,16 +537,16 @@ def backward_smoothing(result_file, d, dt, G, L, T, steady_slip=False, ramp_matr
     n_dim   = x_f.shape[1]
 
     # Determine number of ramp coefficients
-    dim_ramp = 0
+    n_ramp = 0
     if len(ramp_matrix) > 0:
-        dim_ramp += ramp_matrix.shape[1]
+        n_ramp += ramp_matrix.shape[1]
 
     if steady_slip:
-        n_patch = (n_dim - dim_ramp)//3
+        n_patch = (n_dim - n_ramp)//3
     else:
-        n_patch = (n_dim - dim_ramp)//2
+        n_patch = (n_dim - n_ramp)//2
 
-    n_data  = d.shape[1] - n_dim + dim_ramp 
+    n_data  = d.shape[1] - n_dim + n_ramp 
     slip_start = steady_slip * n_patch # Get start of transient slip
     
     # Initialize
@@ -1009,6 +1004,9 @@ def make_transition_matrix(n_patch, dt, steady_slip=False, ramp_matrix=[]):
     """
     Form transtion matrix from Greens function matrix G and smoothing matrix R.
     """
+
+
+
     # Determine number of physical parameters
     if steady_slip:
         n_dim = 3 * n_patch
@@ -1016,18 +1014,17 @@ def make_transition_matrix(n_patch, dt, steady_slip=False, ramp_matrix=[]):
         n_dim = 2 * n_patch
 
     # Determine number of ramp coefficients
-    dim_ramp = 0
-    if len(ramp_matrix)> 0:
-        dim_ramp += ramp_matrix.shape[1]
-        n_dim    += dim_ramp
-
+    n_ramp = 0
+    if len(ramp_matrix) > 0:
+        n_ramp += ramp_matrix.shape[1]
+        n_dim  += n_ramp
     # Form T matrix
     T = np.eye(n_dim)
-    T[-2*n_patch - dim_ramp:-n_patch - dim_ramp, -n_patch - dim_ramp: -dim_ramp] = np.eye(n_patch) * dt # add slip rate term
+    T[n_dim - 2*n_patch - n_ramp:n_dim - n_patch - n_ramp, n_dim - n_patch - n_ramp:n_dim - n_ramp] = np.eye(n_patch) * dt # add slip rate term
 
     # Set bottom right block to zero if including ramp (i.e. no correlation between ramp at k and k+1)
     if len(ramp_matrix) > 0:
-        T[-dim_ramp:, -dim_ramp] = 0
+        T[-n_ramp:, -n_ramp] = 0
 
     # # Form base matrices
     # I     = np.eye(n_patch)
@@ -1213,11 +1210,11 @@ def get_state_constraints(fault, bounds, ramp_matrix=[]):
     Note that len(fault.patches) * len(bounds) should equal len(x) (or, n_dim).
     """
     # Get number of ramp parameters
-    dim_ramp = 0 
+    n_ramp = 0 
     use_ramp = len(ramp_matrix) > 0
 
     if use_ramp:
-        dim_ramp += ramp_matrix.shape[1]
+        n_ramp += ramp_matrix.shape[1]
 
     state_lim = []
 
@@ -1225,7 +1222,7 @@ def get_state_constraints(fault, bounds, ramp_matrix=[]):
         for j in range(len(fault.patches)):
             state_lim.append(bounds[i])
     
-    for k in range(dim_ramp):
+    for k in range(n_ramp):
         state_lim.append(bounds[-1])
     return state_lim
 
