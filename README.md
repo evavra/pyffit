@@ -60,7 +60,7 @@ To demonstrate the inversion, I have created a synthetic example for the case of
 
 
 ### 2. Quadtree downsampling
-![alt text](https://github.com/evavra/pyffit/blob/main/examples/quadtree_init_synthetic_data_1.png "Downsampled line-of-sight displacements")
+![alt text](https://github.com/evavra/pyffit/blob/main/examples/quadtree_synthetic_data_1.png "Downsampled line-of-sight displacements")
 
 
 ### 3. MCMC Results
