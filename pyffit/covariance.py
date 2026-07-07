@@ -7,7 +7,7 @@ import numpy as np
 import multiprocessing
 import cmcrameri.cm as cmc
 import matplotlib.pyplot as plt
-from scipy.optimize import least_squares
+from scipy.optimize import least_squares, lsq_linear
 from matplotlib import colors
 from numba import jit
 
@@ -20,6 +20,7 @@ from pyffit.data import modify_hdf5
 def main():
 
     return
+
 
 def plot_covariance_evolution():
     cov_dir = '/Users/evavra/Projects/SSAF/Data/InSAR/Sentinel_1/timeseries/covariance'
@@ -101,7 +102,7 @@ def estimate_covariances():
     dims    = dataset['z'].isel(date=-1).shape
     
 
-def estimate(x, y, fault, dataset, mask_dists=[3], n_samp=2*10**7, r_inc=0.2, r_max=80, m0=[0.9, 1.5, 5], c_max=2, sv_max=2, mask_dir='.', cov_dir='.', ):
+def estimate(x, y, fault, dataset, mask_dists=[5], mask=[], n_samp=2*10**6, r_inc=0.2, r_max=80, m0=[0.9, 1.5, 5], c_max=2, sv_max=2, mask_dir='.', cov_dir='.', ):
     """
     Estimate covariances from data.
     """
@@ -115,12 +116,12 @@ def estimate(x, y, fault, dataset, mask_dists=[3], n_samp=2*10**7, r_inc=0.2, r_
         # Format if datetime object
         try: 
             date = date.dt.strftime('%Y-%m-%d')
-        except AttributeError:
-            continue
+        except TypeError:
+            date = date
         
         data = dataset['z'].sel(date=date).compute().data.flatten()
 
-        print(f'\nWorking on {date} ({k+1}/{len(dataset["date"])}')
+        print(f'\nWorking on {date} ({k+1}/{len(dataset["date"])})')
         
         SV         = []
         SV_params  = []
@@ -130,15 +131,13 @@ def estimate(x, y, fault, dataset, mask_dists=[3], n_samp=2*10**7, r_inc=0.2, r_
             mask_file = f'{mask_dir}/fault_mask_{mask_dist}_km.h5'
 
             if os.path.exists(mask_file):
-                # print(f'##### Loading d = {mask_dist} mask #####')
-
                 with h5py.File(mask_file, 'r') as file:
-                    mask = file['mask'][()]
+                    fault_mask = file['mask'][()]
             else:
-                mask = get_fault_mask(x, y, fault, mask_dist=mask_dist, out_dir=mask_dir)
+                fault_mask = get_fault_mask(x, y, fault, mask_dist=mask_dist, out_dir=mask_dir)
 
                 file = h5py.File(mask_file, 'w')
-                file.create_dataset('mask', data=mask)
+                file.create_dataset('mask', data=fault_mask)
                 file.close()
 
             # # Plot mask
@@ -151,11 +150,15 @@ def estimate(x, y, fault, dataset, mask_dists=[3], n_samp=2*10**7, r_inc=0.2, r_
             # ax.imshow(mask_inv.reshape(dims), interpolation='none', extent=[np.min(x), np.max(x), np.max(y), np.min(y)], cmap='Greys_r', vmin=0, vmax=1, alpha=0.5)
             # plt.savefig(file_name, dpi=300)
 
+            # Apply given mask
+            if len(mask) == 0:
+                mask = np.ones_like(data)
+                
             # Compute the semivariogram
-            r, sv, sv_count = semivariogram(x, y, data * mask, n_samp=n_samp, r_inc=r_inc, r_max=r_max)
+            r, sv, _ = semivariogram(x, y, data * fault_mask * mask, n_samp=n_samp, r_inc=r_inc, r_max=r_max)
 
             # Fit exponential model
-            sv_params = fit_semivariogram(r[:-1], sv, m0=m0, r_max=r_max).x
+            sv_params = fit_semivariogram(r[:-1], sv, m0=m0, r_max=r_max)
 
             SV.append(sv)
             SV_params.append(sv_params)
@@ -197,7 +200,8 @@ def estimate(x, y, fault, dataset, mask_dists=[3], n_samp=2*10**7, r_inc=0.2, r_
     # ax0.set_xlabel(r'Distance (km)')
     # ax0.xaxis.set_label_position("top")
     return
-        
+
+
 def plot_covariance(r, sv, sv_params, figsize=(6, 3), title='', c_max=2, sv_max=2, dpi=500, file_name='', show=False):
     """
     Plot semivariogram.
@@ -218,6 +222,7 @@ def plot_covariance(r, sv, sv_params, figsize=(6, 3), title='', c_max=2, sv_max=
 
     # Get semivariogram funciton
     sv_model = exp_semivariogram(sv_params[0], sv_params[1], sv_params[2], r)
+    # c_model  = exp_covariance(sv_params[0], sv_params[1], sv_params[2], r)
 
     # Get covariance
     c       = sv_params[0] + sv_params[1] - sv
@@ -240,13 +245,11 @@ def plot_covariance(r, sv, sv_params, figsize=(6, 3), title='', c_max=2, sv_max=
     # ax1.set_xlim(r[0], r[-1])
     # ax1.set_ylim(r[0], results.x[1] * 1.5)
 
-
-
     # if ymax <= 0:
         # ymax = 2 * sv_model[1]
 
-    ax0.set_ylim(0, c_max)
-    ax1.set_ylim(0, sv_max)
+    # ax0.set_ylim(0, c_max)
+    # ax1.set_ylim(0, sv_max)
 
     for ax in axes:
         ax.set_xlabel(r'Distance (km)')
@@ -259,6 +262,7 @@ def plot_covariance(r, sv, sv_params, figsize=(6, 3), title='', c_max=2, sv_max=
         plt.savefig(file_name, dpi=dpi)
     if show:
         plt.show()
+    plt.close()
     return
 
 
@@ -312,6 +316,7 @@ def plot_covariance_overlay(r, SV, SV_model, mask_dists, figsize=(5, 4), cmap=cm
         plt.savefig(file_name, dpi=dpi)
     if show:
         plt.show()
+    plt.close()
     return
 
     # return 
@@ -380,9 +385,9 @@ def semivariogram(x, y, M, r_max=80, n_samp=5000, r_inc=0.1):
     # Compute pairs
     start = time.time()
     r    = dist(x[i], x[j], y[i], y[j])
-    diff = diffsq(M[i], M[j])  
+    diff = diffsq(M[i], M[j])/2
     end = time.time() - start
-
+    
     print(f'Time for {n_samp:1e} pairs: {end:.1f}')
 
     # Prep averaging bins
@@ -402,7 +407,7 @@ def semivariogram(x, y, M, r_max=80, n_samp=5000, r_inc=0.1):
 
     # Average to compute the semivariogram
     # sv     = 0.5 * sv_sum/sv_count
-    sv = 0.5 * sv_sum
+    sv = sv_sum
 
     end = time.time() - start
     print(f'Total time for {n_samp:.1e} pairs: {end:.1f}')
@@ -424,17 +429,40 @@ def exp_covariance(s0, s, r, h):
     return s0 + (s - s0) * np.exp(-h/r)
 
 
-def fit_semivariogram(r, sv, m0=[1, 1, 1], r_max=100):
+def fit_semivariogram(r, sv, m0=[1, 1, 1], bounds=((0, 0, 0), (1000, 1000, 5)), r_max=100, fix_nugget=False):
+    """
+    Fit exponential  model to empirical semivariogram.
+    """
+
+    
     i = (~np.isnan(sv)) & (r <= r_max)
 
     fun = lambda m: sv[i] - exp_semivariogram(m[0], m[1], m[2], r[i])
 
     start   = time.time()
-    results = least_squares(fun, m0)
+    results = least_squares(fun, m0, bounds=bounds).x
     end     = time.time() - start
     print(f'Optimization time: {end:.1f} s')
     
     return results
+
+
+def fit_semivariogram_fixed_nugget(r, sv, m0=[1, 1], r_max=100,):
+    """
+    Fit exponential model to empirical semivariogram.
+    Treat sv(r ~ 0) as direct estimate of nugget variance s0 
+    """
+
+    i = (~np.isnan(sv)) & (r <= r_max)
+
+    fun = lambda m: sv[i] - exp_semivariogram(sv[i][0], m[0], m[1], r[i])
+
+    start   = time.time()
+    results = least_squares(fun, m0).x
+    end     = time.time() - start
+    print(f'Optimization time: {end:.1f} s')
+
+    return np.array([sv[i][0], results[0], results[1]])
 
 
 @jit(nopython=True)
