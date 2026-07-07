@@ -1,4 +1,5 @@
 import os
+import sys
 import glob
 import datetime as dt
 import numpy as np
@@ -74,7 +75,7 @@ def write_grd(x, y, z, file_name, coords_key='geographic', data_key='z', T=True,
         xkey = 'lon'
         ykey = 'lat'
     else:
-        xkey = 'y'
+        xkey = 'x'
         ykey = 'y'
 
     data = xr.Dataset({data_key: ([ykey, xkey], z)}, coords={ykey:([ykey], y), xkey:([xkey], x)})
@@ -396,15 +397,18 @@ def load_insar_dataset(data_dir, data_file_format, name, ref_point, data_factor=
                        velo_model_file='', velo_model_factor=-0.1, incremental=False, use_dates=True, use_datetime=True,
                        look_dir='', look_filenames=['look_e.grd', 'look_n.grd', 'look_u.grd',], mask_file='', remove_mean=False):
     
+
     # Load InSAR data
     dataset = read_insar_dataset(data_dir, data_file_format, xkey=xkey, date_index_range=date_index_range, check_lon=check_lon, use_dates=use_dates, use_datetime=use_datetime)
+
+    if (xkey == 'x') & (coord_type == 'geographic'):
+        dataset = dataset.rename({'x': 'lon','y': 'lat'})
 
     if data_factor != 1:
         dataset['z'] = data_factor * dataset['z']
 
     if remove_mean:
         for k in range(len(dataset.date)):
-            print(k)
             dataset['z'][k, :, :] -= dataset['z'][k, :, :].mean()
 
     if len(mask_file) > 0:
@@ -419,6 +423,7 @@ def load_insar_dataset(data_dir, data_file_format, name, ref_point, data_factor=
             print(f'Error! Mask size ({mask.shape}) does not match data size ({dim})')
     
     if coord_type == 'geographic':
+        print(f'Adding local coordinates centered at {ref_point}')
         # Get full gridded coordinates
         lon, lat = np.meshgrid(dataset.coords['lon'], dataset.coords['lat'])
 
@@ -431,11 +436,12 @@ def load_insar_dataset(data_dir, data_file_format, name, ref_point, data_factor=
     
     elif (dataset.coords['x'].size != dataset['z'].loc[dict(date=dataset.date[0])].size) & (dataset.coords['x'].size != dataset['z'].loc[dict(date=dataset.date[0])].size):
         print('Updating coordinates')
+
         dataset = dataset.rename({'x': 'x_rng','y': 'y_rng'})
         x, y    = np.meshgrid(dataset.coords['x_rng'], dataset.coords['y_rng'])
         dataset.coords['x'] = (('y_rng', 'x_rng'), x)   
         dataset.coords['y'] = (('y_rng', 'x_rng'), y)
-        
+
     # Reference time series to start date
     if reference_time_series:
         dataset['z'] = dataset['z'] - dataset['z'].isel(date=0)
