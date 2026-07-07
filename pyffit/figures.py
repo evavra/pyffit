@@ -1,14 +1,15 @@
 import corner
 import matplotlib
 import numpy as np
-import pandas as pd
+# import pandas as pd
 import cmcrameri.cm as cmc
 import cartopy.crs as ccrs
 import cartopy.feature as cfeature
 import matplotlib.pyplot as plt
-from pyffit.data import read_traces
-from cartopy.io.shapereader import Reader
-from cartopy.feature import ShapelyFeature
+# from pyffit.data import read_traces
+from pyffit.utilities import get_local_xy_coords
+# from cartopy.io.shapereader import Reader
+# from cartopy.feature import ShapelyFeature
 from mpl_toolkits.mplot3d.art3d import Line3DCollection, Poly3DCollection
 from matplotlib.patches import Polygon, Rectangle, Ellipse
 from mpl_toolkits.axes_grid1 import make_axes_locatable
@@ -16,58 +17,227 @@ from matplotlib.animation import FuncAnimation, FFMpegWriter
 from matplotlib.transforms import Affine2D
 
 
-stem       = '/Users/evavra/Projects/Taiwan/ALOS2/A139/F4/'
-intf_paths = [
-              stem + 'intf/20220807_20220918', 
-              stem + 'iono_phase/intf_h/20220807_20220918',
-          
-              stem + 'iono_phase/intf_o/20220807_20220918']
+def plot_time_series(dates, disp, model, title='', fig_ax=(), figsize=(6, 4), xlabel='Date', ylabel='Fault-parallel displacement (mm)', disp_kwargs={}, model_kwargs={}, show=False, close=False, file_name='', dpi=300):
+    """
+    Plot time series
+    """
+
+    if len(fig_ax) != 2:
+        fig, ax = plt.subplots(figsize=figsize)
+
+    else:
+        fig = fig_ax[0]
+        ax  = fig_ax[1]
+
+    ax.set_title(title)
+
+    for data, full_kwargs in zip([disp, model], [disp_kwargs, model_kwargs]):
+        # Account for single time seres
+        if len(data.shape) == 1:
+            data = data.reshape(-1, 1)
+
+        # Handle legend labels
+        keys   = list(disp_kwargs.keys())
+        kwargs = {key: full_kwargs[key] for key in [key for key in keys if key != 'label']}
+        
+        # Plotting
+        for i in range(data.shape[1]):
+            ax.plot(dates, data[:, i], **kwargs)
+            
+        # Replot last one to get legend entry 
+        ax.plot(dates, data[:, i], **full_kwargs)
     
-data_type = 'phasefilt'
-labels    = ['intf', 'intf_h', 'intf_l', 'intf_o']
-mask      = False  # Apply landmask to plots
-corr_min  = 0.05   # Apply coherence cutoff
-grid_dims = (1, 4) #
-region    = []
-cmap      = cmc.roma
-figsize   = (14, 8.2)
+    # Settings
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.legend()
+    
+    if len(file_name) > 0:
+        plt.savefig(file_name, dpi=dpi)
+    
+    if close:
+        plt.close()
+
+    return fig, ax
 
 
-def plot_rotated_fault(fault, x, y, data, mask=[], vlim=[0, 1], cmap='viridis', title='', label='', sites=[], xlim=[-20, 30], ylim=[-10, 10], site_color='C0', s=1, marker='.',  file_name='', show=True, dpi=300):
+def plot_fault(mesh, triangles, colors, fig_ax=(), cmap=cmc.lajolla, figsize=(14, 8.2), orientation='horizontal', fault_height=0.5, facecolor='darkgray', colorbar=False, 
+                      label='', fault_lim='mesh', title='', xlim=[], ylim=[], vlim=[], n_tick=11, n_seg=10, shrink=0.01, fontsize=8, file_name='', 
+                      close=True, show=False, dpi=400):
+    """
+    Plot three displacement panels above side-view of fault model.
+    """
+
+    # Set up figure and axes
+    if len(fig_ax) == 2:
+        fig, ax = fig_ax
+    else:
+        fig, ax = plt.subplots(figsize=figsize)
+
+    # fig.suptitle(title)
+    x_idx = 0
+
+    ax.set_ylabel('Depth (km)')
+    ax.set_facecolor(facecolor)
+
+
+    # Get axes limits
+    if len(xlim) == 0:
+        xlim = [np.nanmin(mesh[:, 0]), np.nanmax(mesh[:, 0])]
+
+    if len(ylim) == 0:
+        ylim = [np.nanmin(mesh[:, 1]), np.nanmax(mesh[:, 1])]
+
+    if len(vlim) == 0:
+        vlim = [np.nanmin(c), np.nanmax(c)]
+
+
+    # ---------------------------------------- Fault panels ----------------------------------------
+    # Set up colorbar for fault slip
+    alpha = 1
+    edges = True
+    cvar  = colors
+    vmin  =  vlim[0]
+    vmax  =  vlim[1]
+
+    ticks = np.linspace(vmin, vmax, n_tick)
+    cval  = (cvar - vmin)/(vmax - vmin) # Normalized color values
+    cmap  = matplotlib.colors.LinearSegmentedColormap.from_list(cmap, plt.get_cmap(cmap, 265)(np.linspace(0, 1, 265)), n_seg)
+    sm    = plt.cm.ScalarMappable(cmap=cmap, norm=plt.Normalize(vmin=vmin, vmax=vmax))
+    c     = cmap(cval)
+
+    # Plot fault meshes and slip distributions
+    for tri, c0 in zip(triangles, c):
+        pts = mesh[tri]
+
+        # Plot triangles
+        face = Polygon(list(zip(pts[:, x_idx], pts[:, 2])), color=c0, alpha=alpha, linewidth=0.1)
+        ax.add_patch(face)
+
+        edges = Polygon(list(zip(pts[:, x_idx], pts[:, 2])), edgecolor='k', facecolor='none', alpha=1, linewidth=0.5)
+        ax.add_patch(edges)
+            
+    # Axis settings
+    if fault_lim == 'mesh':
+        ax.set_xlim(mesh[:, x_idx].min(), mesh[:, x_idx].max())
+        ax.set_ylim(mesh[:, 2].min(), mesh[:, 2].max())
+
+    elif fault_lim == 'map':
+        ax.set_xlim(xlim)
+        ax.set_ylim(ylim[0] - ylim[1], 0)
+
+    ax.set_aspect(1)
+    ax.set_title(title, fontsize=fontsize)
+    
+    if colorbar:
+        fig.colorbar(sm, label=label, shrink=shrink, ticks=ticks)
+
+    # Finish up
+    if len(file_name) > 0:
+        fig.savefig(file_name, dpi=dpi)
+        
+    if show:
+        plt.show()
+
+    if close:
+        plt.close()
+
+    return fig, ax, sm
+
+
+def get_gridspec(width_ratios, height_ratios, figsize=(14, 8), constrained_layout=True, caxes_locs=[[0, -1]],
+                fig_kwargs={}, gridspec_kwargs={}):
+    """
+    Initialize GridSpec object based on given height and width ratios.
+    """
+    fig = plt.figure(figsize=figsize, constrained_layout=constrained_layout, **fig_kwargs)
+    gs  = fig.add_gridspec(len(height_ratios), len(width_ratios), 
+                        width_ratios=width_ratios, height_ratios=height_ratios,
+                            **gridspec_kwargs)
+    
+    axes  = [fig.add_subplot(gs[i, j]) for i in range(len(height_ratios)) for j in range(len(width_ratios) - 1)]
+    caxes = [fig.add_subplot(gs[loc[0], loc[1]]) for loc in caxes_locs]
+
+    # Return cax if only one
+    if len(caxes) == 1:
+        caxes = caxes[0]
+
+    return fig, axes, caxes
+
+
+def plot_rotated_fault(fault, x, y, data, fig_ax=[], figsize=(14, 8.2), mask=[], vlim=[0, 1], cmap='viridis', title='', label='', sites=[], 
+                       xlim=[-20, 30], ylim=[-10, 10], xtick_inc=0, ytick_inc=0, site_color='C0', s=1, marker='.', colorbar=True, 
+                       facecolor='darkgray', xlabel='x (km)', ylabel='y (km)', file_name='', show=True, close=True, dpi=300, get_transform=False):
     """
     Plot data in fault-oriented coordinate system.
     """
 
-    fig, ax = plt.subplots(figsize=(14, 8.2), constrained_layout=True)
+    # salton_sea = load_salton_sea()
+
+    # Set up figure
+    if len(fig_ax) != 2:
+        fig, ax   = plt.subplots(figsize=figsize, constrained_layout=True)
+    else:
+        fig, ax = fig_ax
+
+    # Rotate axes
     transform = Affine2D().rotate_deg_around(0, 0, fault.avg_strike + 90) + ax.transData
 
-    ax.plot(fault.trace[:, 0] - fault.origin_r[0], fault.trace[:, 1] - fault.origin_r[1], c='k', zorder=0, transform=transform)
-    im = ax.scatter(x - fault.origin_r[0], y  - fault.origin_r[1], c=data, vmin=vlim[0], vmax=vlim[1], marker=marker, s=s, cmap=cmap, transform=transform)
+    # Fault trace
+    ax.plot(fault.trace[:, 0] - fault.origin_r[0], fault.trace[:, 1] - fault.origin_r[1], c='k', zorder=100, transform=transform)
+    # ax.fill(salton_sea[:, 0], salton_sea[:, 1], c='lightskyblue', transform=transform)
 
+    # Datra
+    im = ax.scatter(x - fault.origin_r[0], y  - fault.origin_r[1], c=data, vmin=vlim[0], vmax=vlim[1], marker=marker, s=s, linewidth=0, cmap=cmap, transform=transform, zorder=0)
+    # im = ax.imshow(x - fault.origin_r[0], y  - fault.origin_r[1], c=data, vmin=vlim[0], vmax=vlim[1], marker=marker, s=s, cmap=cmap, transform=transform, zorder=0)
+
+    # Add sites
     if len(sites) > 0:
         ax.scatter(sites['x'] - fault.origin_r[0], sites['y']  - fault.origin_r[1], facecolor=site_color, edgecolor='k', s=50, transform=transform, zorder=100)
 
         for i, site in sites.iterrows():
             ax.annotate(site['name'], [site['x'] - fault.origin_r[0], site['y']  - fault.origin_r[1]], xycoords=transform, zorder=1000)
 
+    # Settings
     ax.set_title(title)
     ax.set_aspect(1)
     ax.set_xlim(xlim)
     ax.set_ylim(ylim)
-    ax.set_xlabel('X (km)')
-    ax.set_ylabel('Y (km)')
-    ax.set_facecolor('gainsboro')
-    fig.colorbar(im, label=label, shrink=0.5)
+
+    if xtick_inc > 0:
+        ax.set_xticks(np.arange(xlim[0], xlim[1] + xtick_inc, xtick_inc))
+     
+    if ytick_inc > 0:
+        if ylim[0] < 0:
+            tick_pos =  np.arange(0,  ylim[1], ytick_inc)
+            tick_neg = -np.arange(0, -ylim[0], ytick_inc)[1::-1]
+            yticks   =  np.concatenate((tick_neg, tick_pos))
+        else:
+             yticks = np.arange(ylim[0], ylim[1] + ytick_inc, ytick_inc)   
+
+        ax.set_yticks(yticks)
+
+    ax.set_xlabel(xlabel)
+    ax.set_ylabel(ylabel)
+    ax.set_facecolor(facecolor)
+
+    if colorbar:
+        fig.colorbar(im, label=label, shrink=0.5)
 
     if len(file_name) > 0:
         fig.savefig(file_name, dpi=dpi)
-        plt.close()
         
     if show:
         plt.show()
 
-    return fig, ax
+    if close:
+        plt.close()
 
+    if get_transform:
+        return fig, ax, im, transform
+    else:
+        return fig, ax, im
+        
 
 def animation():
     # Define the figure and axis
@@ -434,7 +604,7 @@ def plot_grid_map(data, extent, region=[], fig_ax=(), projection=ccrs.PlateCarre
 def plot_fault_3d(mesh, triangles, c=[], fig_ax=[], edges=False, cmap_name='viridis', cbar_label='Slip (m)', 
                   labelpad=20, azim=45, elev=10, n_seg=100, n_tick=11, alpha=1, vlim_slip=[], title='', 
                   file_name='', show=True, dpi=500, invert_zaxis=False, edge_kwargs=dict(edgecolor='k', linewidth=0.25),
-                  figsize=(14, 8.2), cbar_kwargs=dict(location='bottom', pad=-0.1, shrink=0.5)):
+                  figsize=(14, 8.2), cbar_kwargs=dict(location='bottom', pad=-0.1, shrink=0.5), zticks=[]):
     """
     Make 3D plot of finite fault model.
 
@@ -503,8 +673,10 @@ def plot_fault_3d(mesh, triangles, c=[], fig_ax=[], edges=False, cmap_name='viri
     ax.set_ylim(mesh[:, 1].min(), mesh[:, 1].max())
     ax.set_zlim(mesh[:, 2].min(), mesh[:, 2].max())
 
-    zticks = ax.get_zticks()
-
+    if len(zticks) == 0:
+        zticks = ax.get_zticks()
+    else:
+        ax.set_zticks(zticks)
     ax.set_zticklabels([f'{int(-tick)}' for tick in zticks])
     
     if invert_zaxis:
@@ -513,9 +685,16 @@ def plot_fault_3d(mesh, triangles, c=[], fig_ax=[], edges=False, cmap_name='viri
     ax.set_ylabel('North (km)', labelpad=labelpad)
     ax.set_zlabel('Depth (km)', labelpad=labelpad/4)
     # ax.view_init(azim=45, elev=90)
+
+
     ax.view_init(azim=azim, elev=elev)
     fig.suptitle(title)
-    fig.tight_layout()
+    # fig.tight_layout()
+    fig.subplots_adjust(
+                            left=-0.1, right=1.,  # horizontal margins
+                            top=1.1, bottom=-0.1,  # vertical margins
+                            )
+
     if len(file_name) > 0:
         plt.savefig(file_name, dpi=dpi)
         plt.close()
@@ -527,7 +706,7 @@ def plot_fault_3d(mesh, triangles, c=[], fig_ax=[], edges=False, cmap_name='viri
     return fig, ax
 
 
-def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), orientation='horizontal', cmap_disp='coolwarm', x_ax='east', fault_height=0.5, 
+def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), orientation='horizontal', cmap_disp='coolwarm', x_ax='east', fault_height=0.5, facecolor='darkgray',
                       fault_lim='mesh', title='', fault_label='', markersize=10, trace=False, vlim_disp=[], vlim_slip=[], xlim=[], ylim=[], n_tick=11, n_seg=10, mu=0, eta=0, 
                       shrink=0.01, fontsize=8, file_name='', show=False, dpi=400):
     """
@@ -560,6 +739,10 @@ def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), 
 
         for ax in data_axes:
             ax.set_xlabel('East (km)')
+            ax.set_facecolor(facecolor)
+
+        for ax in fault_axes:
+            ax.set_facecolor(facecolor)
 
     elif orientation == 'vertical':
         width_ratios  = (1, 0.025)
@@ -576,11 +759,13 @@ def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), 
         for ax in data_axes:
             ax.set_ylabel('Y (km)')
             ax.set_xticklabels([])
+            ax.set_facecolor(facecolor)
 
         fault_axes[-1].set_xlabel('X (km)')
 
         for ax in fault_axes:
             ax.set_ylabel('Depth (km)')
+            ax.set_facecolor(facecolor)
 
     all_x = []
     all_y = []
@@ -687,8 +872,6 @@ def plot_fault_panels(panels, fault_panels, mesh, triangles, figsize=(14, 8.2), 
         fig.colorbar(sm, cax=caxes[k + i + 1], label=panel['label'], shrink=shrink)
 
     # Finish up
-    fig.tight_layout()
-
     if len(file_name) > 0:
         fig.savefig(file_name, dpi=dpi)
         
@@ -863,7 +1046,6 @@ def plot_grid(x, y, grid, extent=[],xlabel='X', ylabel='Y',  title='', cmap='coo
 
     if cbar:
         plt.colorbar(im, label=clabel, pad=0.1, shrink=0.5)
-
 
     if len(file_name) > 0:
         plt.savefig(file_name, dpi=dpi)
@@ -1067,3 +1249,29 @@ def plot_grid_search(cost, mu, eta, label='', xlabel='', ylabel='', contours=[],
 
     return 
 
+
+def plot_matrix(A, label='', vlim=[-1, 1], cmap='coolwarm', figsize=(14, 8.2), show=True, dpi=300, filename=''):
+
+
+    """
+    Plot matrix using imshow.
+    """
+    fig, ax = plt.subplots(figsize=figsize)
+    
+    ax.set_title(f'{label} full: min. {A.min()} max. {A.max()} | diag: min. {np.diag(A).min()} max. {np.diag(A).max()}')
+    ax.imshow(A, cmap=cmap, vmin=vlim[0], vmax=vlim[1], interpolation='none')
+    
+    if len(filename) > 0:
+        plt.savefig(filename, dpi=dpi)
+    if show:    
+        plt.show()
+
+    return fig, ax
+
+
+def load_salton_sea():
+    ref_point   = [-116, 33.5]
+    coords = np.loadtxt('/Users/evavra/Projects/SSAF/Data/InSAR/salton_sea.gmt')
+    x, y = get_local_xy_coords(coords[:, 0], coords[:, 1], ref_point) 
+
+    return np.vstack((x, y)).T
