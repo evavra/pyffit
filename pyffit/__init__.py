@@ -12,3 +12,4 @@ from . import synthetics
 # from . import testing
 from . import utilities
 from . import covariance
+from . import nif
