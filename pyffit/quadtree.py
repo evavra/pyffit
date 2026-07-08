@@ -290,6 +290,7 @@ class Cell:
         self.width      = np.max([extent[1] - extent[0], extent[3] - extent[2]])
         self.look       = np.mean(look, axis=0)
 
+
         # If generating for the first time, determine intersection status
         if (sign == 0) & (len(side) != data.size):
             # Check if cell intersects with fault
@@ -316,7 +317,12 @@ class Cell:
 
             # b) One node intersects
             elif len(i_intersect) == 1: # Once node intersects
-                trace_seg = trace[i_intersect[0] - 1:i_intersect[0] + 1, :]
+                if i_intersect[0] == 0:
+                    trace_seg = trace[:2, :]
+                elif i_intersect[0] == trace.shape[0]:
+                    trace_seg = trace[-2:, :]
+                else:
+                    trace_seg = trace[i_intersect[0] - 1:i_intersect[0] + 1, :]
                 self.intersects = True
 
             # c) Multiple nodes intersect
@@ -329,6 +335,8 @@ class Cell:
             side = np.zeros_like(self.data.values)
 
             for i in range(len(self.data.values)):
+                if len(trace_seg) == 0:
+                    print(trace_seg, i_intersect)
                 side[i] = point_side_of_line(trace_seg, (self.data.x[i], self.data.y[i]))
 
             if sum(side == -1) > sum(side == 1):
@@ -363,7 +371,7 @@ def get_min_fault_dist(trace, extent):
 
 
 # ------------------ Application methods ------------------
-def get_downsampled_time_series(datasets, inversion_inputs, fault, n_dim, dataset_name='data', file_name='downsampled_data.h5'):
+def get_downsampled_time_series(datasets, inversion_inputs, fault, n_dim, remove_mean=False, dataset_name='data', file_name='downsampled_data.h5'):
     """
     Generate matrix containing downsampled time series data based off of an existing quadtree structure
     """
@@ -394,6 +402,9 @@ def get_downsampled_time_series(datasets, inversion_inputs, fault, n_dim, datase
 
             # Select data for date
             data = datasets[dataset_name]['z'].isel(date=k).compute().data
+            
+            if remove_mean:
+                data -= np.nanmean(data)
 
             # Redo cells
             cells = update_cells(inversion_inputs[dataset_name].tree.cells, datasets[dataset_name].coords['x'].compute().data.flatten(), datasets[dataset_name].coords['y'].compute().data.flatten(), 
@@ -401,8 +412,13 @@ def get_downsampled_time_series(datasets, inversion_inputs, fault, n_dim, datase
 
             # Update quadtree
             inversion_inputs[dataset_name].tree.compute_values(cells)
-            d[k, :inversion_inputs[dataset_name].tree.data.size] = inversion_inputs[dataset_name].tree.data
+            data_samp = inversion_inputs[dataset_name].tree.data
+            if remove_mean:
+                data_samp -= np.mean(data_samp)
+
+            d[k, :inversion_inputs[dataset_name].tree.data.size] = data_samp 
             std[k, :] = inversion_inputs[dataset_name].tree.std
+
 
             end_date = time.time() - start_date
             print(f'{date} ({k + 1}/{n_date}) completed in {end_date:.1f} s')
