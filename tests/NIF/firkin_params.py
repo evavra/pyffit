@@ -16,8 +16,8 @@ mode = ['NIF', 'analyze_model'] # NIF for standard NIF run
 # Files and directories
 mesh_file           = '/raid/class239/ellis/SSAF/NIF/mesh/mesh_points_updated.txt'
 triangle_file       = '/raid/class239/ellis/SSAF/NIF/mesh/mesh_connectivity_updated.txt'
-downsampled_dir     = '/raid/class239/ellis/SSAF/NIF/data/updated_mesh/downsampled_data'
-out_dir             = '/raid/class239/ellis/SSAF/NIF/data/updated_mesh'
+downsampled_dir     = '/raid/class239/ellis/SSAF/NIF/data/updated_mesh/deramped/downsampled_data'
+out_dir             = '/raid/class239/ellis/SSAF/NIF/data/updated_mesh/deramped'
 data_dir            = '/raid/class239/ellis/SSAF/timeseries/decomposed/filt/corrections'
 file_format         = 'u_para_*_filt_10km_deramped.grd'
 
@@ -81,7 +81,7 @@ edge_slip_samp       = False
 
 # NIF parameters
 omega           = 1e4   # temporal smoothing hyperparameter
-kappa           = 1e-1  # spatial smoothing hyperparameter
+kappa           = 1e0  # spatial smoothing hyperparameter
 sigma           = 1e0   # data covariance scaling hyperparameter 
 rho             = 1e0   # ramp covariance scaling hyperparameter 
 
