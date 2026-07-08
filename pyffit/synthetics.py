@@ -1,22 +1,92 @@
-import numpy as np
+import os
+import h5py
 import random
+import numpy as np
+from numba import jit
 
 
-def get_aps_params(klim=[-3, 5], kinc=0.1, amp_ref=5.0, nexp_ref=1.5, lc_ref=5):
+def get_aps_params(klim=[-3, 5], kinc=0.1, amp_ref=5.0, nexp_ref=2, Lc_ref=2, randomize=False):
     """
     Get instance of APS spectral parameters based on input reference values. 
+
+    INPUT
+    klim      - wavenumber range (log-scale) 
+    kinc      - wavenumber increment (log-scale)
+    amp_ref   - reference amplitude
+    nexp_ref  - reference power law exponent 
+    Lc_ref    - reference decay wavelength  
+    randomize - scale amp, nexp, and Lc by random value (0-1); default is True 
+
+    OUTPUT:
+    amp - APS amplitude
+    k   - wavenumber grid
+    Pk  - power spectrum
+
+    Old defaults: klim=[-3, 5], kinc=0.1, amp_ref=5.0, nexp_ref=1.5, Lc_ref=5
     """
+    if randomize:
+        perturb = np.random.uniform(size=3)
+    else:
+        perturb = np.array([1, 0, 1])
 
-    amp  = amp_ref * np.random.uniform() # amplitude
-    k    = np.concatenate(([0], 10**np.arange(klim[0], klim[1] + kinc, kinc)))
-    nexp = nexp_ref + np.random.uniform()
-    lc   = lc_ref * np.random.uniform()
-    Pk   = 1/(k + 2*np.pi/lc)**nexp
+    k = np.concatenate(([0], 10**np.arange(klim[0], klim[1] + kinc, kinc))) # wavenumber grid
+    # amp  = amp_ref  * np.random.uniform()                                    # amplitude
+    # nexp = nexp_ref + np.random.uniform()                                    # power law exponent
+    # Lc   = Lc_ref   * np.random.uniform()                                    # decay wavelength
+    amp  = amp_ref  * perturb[0]                                               # amplitude
+    nexp = nexp_ref + perturb[1]                                               # power law exponent
+    Lc   = Lc_ref   * perturb[2]                                               # decay wavelength
+    Pk   = 1/(k + 2*np.pi/Lc)**nexp                                          # power spectrum
+    # Pk = 1/(1 + (2 * np.pi * k * Lc)**nexp)                                  # power spectrum for exponential decay
+    # Pk = 1/(1 + (2 * np.pi * k * Lc)**nexp)                                    # power spectrum for exponential decay
 
+    print(f'k = {k.min():.1e} - {k.max():.1e} | L_c = {Lc:.1f} | n_exp = {nexp:.1e}')
     return amp, k, Pk
 
 
-def make_synthetic_aps(X0, Z0, klim=[-3, 5], kinc=0.1, manual_amp=0, amp_ref=5.0, nexp_ref=1.5, lc_ref=5):
+def make_synthetic_aps(x, y, aps_amp=5, L_c=1, randomize=False):
+    
+    if randomize:
+        aps_amp *= np.random.uniform()
+        L_c *= L_c
+
+    # Get grid information
+    Nx = x.size
+    Ny = y.size
+    dx = np.diff(x)[0]
+    dy = np.diff(y)[0]
+
+    # Get wavenumber grids in x and y directions
+    kx     = np.fft.fftfreq(Nx, d=dx)
+    ky     = np.fft.fftfreq(Ny, d=dy)
+    kx, ky = np.meshgrid(kx, ky, indexing='xy')
+
+    # Isotropic wavenumber amplitude
+    k = np.sqrt(kx**2 + ky**2)
+
+    # Power spectrum of exponential kernel
+    S = 1 / (1.0 + (2 * np.pi * L_c * k)**2)
+
+    # Sample complex white noise in frequency domain
+    white_noise = np.random.normal(size=(Ny, Nx)) + 1j * np.random.normal(size=(Ny, Nx))
+
+    # Apply spectral filter
+    filtered_noise_fft = np.sqrt(S) * white_noise
+
+    # Inverse FFT to return to spatial domain
+    aps = np.fft.ifft2(filtered_noise_fft).real
+
+    # if aps_amp > 0:
+    aps_mean = np.mean(aps)                                          # Get mean
+    aps -= aps_mean                                                  # Remove mean
+    aps  = (aps - np.min(aps))/(np.max(aps) - np.min(aps)) # Mormalize 0-1
+    aps  = 2 * aps_amp * aps - aps_amp                     # Rescale to specified amplitude
+    aps += aps_mean                                                  # Restore mean
+
+    return aps
+
+
+def make_synthetic_aps_old(X0, Z0, klim=[-5, 5], kinc=0.01, manual_amp=0, amp_ref=5.0, nexp_ref=1, Lc_ref=1, randomize=False):
     """
     Generate "correlated noise" Ur(X,  Z) with a power spectrum Pk(k) starting with white noise,    
     then multipling its fft by Pk(k), going back in spce domain (ifft2)
@@ -26,7 +96,7 @@ def make_synthetic_aps(X0, Z0, klim=[-3, 5], kinc=0.1, manual_amp=0, amp_ref=5.0
     Z0         - along dip coordinates (km)  
     manual_amp - manually specify max/min value of noise
     amp_ref    - reference APS value
-    nexp_ref, lc_ref - power spectrum parameters
+    nexp_ref, lc_ref - power spectrum parameters 
 
     OUTPUT:
     Ursub      - simulated atmospheric noise 
@@ -41,36 +111,49 @@ def make_synthetic_aps(X0, Z0, klim=[-3, 5], kinc=0.1, manual_amp=0, amp_ref=5.0
         Z = Z0
 
     # Get spectral parameters
-    amp, k, Pk = get_aps_params(klim=klim, kinc=kinc, amp_ref=amp_ref, nexp_ref=nexp_ref, lc_ref=lc_ref)
+    # amp, k, Pk = get_aps_params(klim=klim, kinc=kinc, amp_ref=amp_ref, nexp_ref=nexp_ref, Lc_ref=Lc_ref)
+    if randomize:
+        perturb = np.random.uniform(size=3)
+    else:
+        perturb = np.array([1, 0, 1])
 
+    k = np.concatenate(([0], 10**np.arange(klim[0], klim[1] + kinc, kinc))) # wavenumber grid
+    amp  = amp_ref  * perturb[0]                                               # amplitude
+    nexp = nexp_ref + perturb[1]                                               # power law exponent
+    Lc   = Lc_ref   * perturb[2]                                               # decay wavelength
+    Pk   = (1/(k + (2*np.pi/Lc)))**nexp                                          # power spectrum
+    # Pk = 1/(1 + (2 * np.pi * k * Lc)**nexp)                                  # power spectrum for exponential decay
+    # Pk = 1/(1 + (2 * np.pi * k * Lc)**nexp)                                    # power spectrum for exponential decay
+
+    print(f'k = {k.min():.1e} - {k.max():.1e} | L_c = {Lc:.1f} | n_exp = {nexp:.1e}')
 
     # Get grid information
-    NX0   = len(X0)        # get desired x grid dimesion
-    NZ0   = len(Z0)        # get desired z grid dimesion
-    dx    = np.diff(X[:2]) # grid size (km)
-    LX    = np.max(X) - np.min(X)
-    LZ    = np.max(Z) - np.min(Z)
-    L     = np.sqrt(LX*LZ)*1000 # len in m
+    NX0   = len(X0)                   # get desired x grid dimesion
+    NZ0   = len(Z0)                   # get desired z grid dimesion
+    dx    = np.diff(X[:2])[0]            # grid size (km)
+    LX    = np.max(X) - np.min(X)     # x range
+    LZ    = np.max(Z) - np.min(Z)     # y range
+    L     = np.sqrt(LX * LZ) * 1000   # len in m
     N_max = int(2*np.round(len(X)/2)) # even numbers
-
 
     # # start with white noise with a unif. pdf:
     U = np.random.uniform(size=(N_max, N_max))
 
     # Wavenumber matrix (with 0 frequency at the center, even number of points)
-    dxm      = dx*1000                                             # grid size,   m
-    Kny      = (1/dxm/2)*(2*np.pi)                                 # nyquist frequency * 2pi  =  max wavenumber
-    # K        = np.arange(-Kny, Kny - (Kny*2)/N_max, (Kny*2)/N_max) # Get wavemenumber range
-    K       = np.arange(-Kny, Kny, (Kny*2)/N_max)                 # Get wavemenumber range
-    KXX, KZZ = np.meshgrid(K, K)                                   # KXX and KZZ are nz*nz matrix
-    K        = np.sqrt(KXX**2 + KZZ**2)                            # K in m^-1 
+    dxm      = dx*1000                                               # grid size (m)
+    Kny      = (1/dxm/2)*(2*np.pi)                                   # nyquist frequency * 2pi  =  max wavenumber
+    # K        = np.arange(-Kny, Kny - (Kny*2)/N_max, (Kny*2)/N_max) # Get wavenumber range
+    K        = np.arange(-Kny, Kny, (Kny*2)/N_max)                   # Get wavenumber range
+    KXX, KZZ = np.meshgrid(K, K)                                     # KXX and KZZ are nz*nz matrix
+    K        = np.sqrt(KXX**2 + KZZ**2)                              # K in m^-1 
     # print('K', K.shape)
     # print('K2', K2.shape)
+
     # adjust the power-spectrum of the image Pk(k)
-    aps_K  = np.fft.fftshift(np.fft.fft2(U))                         # direct Fourier transform
-    aks_Kv = np.interp(K.flatten()*L, k,  Pk)                                 # fix |U(k)| = Pk(Kv)
-    aps_K  = aks_Kv.reshape((N_max, N_max)) * np.exp(1j * np.angle(aps_K)) 
-    Ur     = np.real(np.fft.ifft2(np.fft.ifftshift(aps_K)))             # inverse Fourier transform
+    aps_K  = np.fft.fftshift(np.fft.fft2(U))                                # direct Fourier transform
+    aks_Kv = np.interp(K.flatten() * L, k, Pk)                                # fix |U(k)| = Pk(Kv)
+    aps_K  = aks_Kv.reshape((N_max, N_max)) * np.exp(1j * np.angle(aps_K))  #
+    Ur     = np.real(np.fft.ifft2(np.fft.ifftshift(aps_K)))                 # inverse Fourier transform
     # The imag part may be non-zero due to numerical error (should be ~1e-16)
 
     # Crop to desired dimentions if not square
@@ -80,7 +163,6 @@ def make_synthetic_aps(X0, Z0, klim=[-3, 5], kinc=0.1, manual_amp=0, amp_ref=5.0
     # else:
     #     Ursub = Ur[:NZ0, :] # original size
     #     Ursub = Ur[:, :NX0]
-
     Ursub = Ur[:NZ0, :NX0]
 
     # Re-scale APS amplitude to have specified average
@@ -197,6 +279,7 @@ def get_line_segment_distance(segment, point):
 
 
 def get_synthetic_slip(mesh, triangles, plane='east', max_slip=1, strike_scale=0.5, dip_scale=0.5, x_shift=0):
+    
     """
     Get Gaussian slip distribution
     """
@@ -218,3 +301,8 @@ def get_synthetic_slip(mesh, triangles, plane='east', max_slip=1, strike_scale=0
     slip[:, 0]  = slip_tri
 
     return slip
+
+
+@jit(nopython=True)
+def dist(x0, x1, y0, y1):
+    return np.sqrt((x0 - x1)**2 + (y0 - y1)**2)
