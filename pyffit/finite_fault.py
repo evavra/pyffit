@@ -3,7 +3,7 @@ import time
 import h5py
 import numba 
 import numpy as np
-# from okada_wrapper
+# from okada_wrapper import
 import cutde.halfspace as HS
 from scipy.interpolate import interp1d
 from itertools import combinations
@@ -98,8 +98,11 @@ class TriFault:
             y_mesh          -= self.origin_r[1]
             x_trace         -= self.origin_r[0]
             y_trace         -= self.origin_r[1]
-            self.mesh_r      = np.array([x_mesh, y_mesh]).T
+            self.mesh_r      = np.array([x_mesh, y_mesh, self.mesh[:, 2]]).T
             self.trace_r     = np.array([x_trace, y_trace]).T
+
+
+            
 
     def greens_functions(self, x, y, z=[], look=[], disp_components=[0, 1, 2], slip_components=[0, 1, 2], rotation=np.nan, squeeze=True):
         """
@@ -254,12 +257,6 @@ class TriFault:
         if edge_slip:
             G = np.vstack((G, self.eta*self.edge_slip_matrix))  
 
-        # R = self.mu*self.smoothing_matrix
-        # L = self.eta*self.edge_slip_matrix
-        # G = np.vstack((GF, R, L))  
-        # G = np.vstack((GF, self.mu*self.smoothing_matrix)) 
-        # G = make_observation_matrix(GF, self.mu*self.smoothing_matrix)
-
         def plot_matrix(A, name):
 
             vlim = np.max(np.abs(A))
@@ -347,23 +344,23 @@ class TriFault:
         self.moment, self.magnitude = get_moment_magnitude(self.mesh, self.triangles, self.slip, shear_modulus=self.shear_modulus)
 
 
-def make_observation_matrix(G, R, t=1):
-    """
-    Form observation from Greens function matrix G and smoothing matrix R.
-    """
+    def disp_free(x, y, z, mesh, triangles, slip, nu=0.25, verbose=True):
+        """
+        Get surface displacements for given fault mesh and slip distribution.
+        """
+        start = time.time()
+        
+        # Prepare coordinates
+        pts = np.array([x, y, z]).reshape((3, -1)).T.copy() 
 
-    zeros_G = np.zeros_like(G)
-    zeros_R = np.zeros_like(R)
+        # Compute displacements
+        disp = HS.disp_free(pts, mesh[triangles], slip, nu)
 
-    # Form rows
-    data         = np.hstack((  G * t,       G, zeros_G))
-    v_smooth     = np.hstack((      R, zeros_R, zeros_R))
-    W_smooth     = np.hstack((zeros_R,       R, zeros_R))
-    W_dot_smooth = np.hstack((zeros_R, zeros_R,       R))
 
-    H            = np.vstack((data, v_smooth, W_smooth, W_dot_smooth))
-
-    return H
+        end = time.time() - start
+        print(f'Time for {x.size:.0f} points: {end:.1f}')
+        
+        return disp
 
 
 class Fault:
@@ -984,7 +981,7 @@ def get_fault_info(mesh, triangles, verbose=True):
     return dict(n_vertex=n_vertex, n_patch=n_patch, depths=depths, layer_thicknesses=layer_thicknesses, trace=trace, n_top_patch=n_top_patch, l_top_patch=l_top_patch)
 
 
-def get_moment_magnitude(mesh, triangles, slip_model, shear_modulus=30e9):
+def get_moment_magnitude(mesh, triangles, slip_model, shear_modulus=30e9, unit='dyne-cm'):
     """
     Compute moment and moment magnitude from a given fault slip model.
     """
@@ -1012,6 +1009,9 @@ def get_moment_magnitude(mesh, triangles, slip_model, shear_modulus=30e9):
     moment    = np.sum(patch_moment)
     magnitude = (2/3) * np.log10(moment) - 10.7
 
+    # Convert to N-m if specified
+    if unit == 'N-m':
+        moment /= 1e7
     return moment, magnitude
 
 
@@ -1136,4 +1136,89 @@ def get_edge_matrix(mesh, triangles, R):
     return E
 
 
+
+def fit_fault_spline(fault, seg_inc, bounds=[], upsamp_inc=10, **kwargs):
+    """
+    Fit linear spline with segments of approximately seg_inc length (km) to fault trace 
+    Assumes fault is an (n, 2) array with Cartesian coordinates (km).
+    """    
+
+    # Select nodes within specified bounds
+    if len(bounds) == 4:
+        fault_sel  = fault[(fault[:, 0] >= bounds[0]) & (fault[:, 0] <= bounds[1]) & (fault[:, 1] >= bounds[2]) & (fault[:, 1] <= bounds[3])]
+
+    # Estimate average strike from selected portion of fault 
+    p          = np.polyfit(fault_sel[:, 0], fault_sel[:, 1], 1)
+    strike_avg = np.arctan(p[0])
+
+    # Get approximate spline segment length from average fault strike
+    # upsamp_deg   = abs(upsamp_inc * np.sin(strike_avg)/111.19)
+    
+    # Make spline function
+    spl_upsamp    = interp1d(fault_sel[:, 0], fault_sel[:, 1])
+    
+    # Define upsampled longitude coordinates and interpolate latitude coordinates
+    lon_upsamp   = np.arange(fault_sel[:, 0].min(), fault_sel[:, 1].max(), upsamp_inc)
+    lat_upsamp   = spl_upsamp(lon_upsamp)
+    # fault_upsamp = pd.DataFrame({'UTMx': lon_upsamp[::-1], 'UTMy': lat_upsamp[::-1]})
+    # fault_upsamp = add_ll_coords(fault_upsamp, EPSG)
+
+    # Calulate strikes from upsampled fault trace
+    nodes_upsamp = get_nodes(fault_upsamp)
+
+    # Calculate along strike distance
+    nodes_upsamp = calc_fault_dist(nodes_upsamp)    
+
+    # Get approx. fault length 
+    f_length = nodes_upsamp['dist'].max()//1
+
+    # Get desired node locations
+    d_target = np.arange(0, f_length, seg_inc)
+    # d_ind = np.empty(len(d_target))
+
+    # Get index of best-approximation of d
+    keys = [nodes_upsamp.iloc[np.argmin(abs(nodes_upsamp['dist'].values - d))].name for i, d in enumerate(d_target)]
+
+    # nodes_spl = nodes_upsamp.iloc[i]
+    if 'key_str' in kwargs.keys():
+        key_str = kwargs['key_str']
+    else:
+        key_str = 'F'
+
+    nodes_spl = nodes_upsamp.loc[keys, nodes_upsamp.columns]
+    nodes_spl['new_index'] = [f'{key_str}{i}' for i in range(len(nodes_spl))]
+    nodes_spl.set_index('new_index', drop=True, inplace=True)
+
+    # Check
+    # plt.plot(fault['Longitude'], fault['Latitude'], nodes_upsamp['Longitude'], nodes_upsamp['Latitude'], nodes_spl['Longitude'], nodes_spl['Latitude'], '-o')
+    # plt.show()
+
+    return nodes_spl
+
+
+
+def get_nodes(fault):
+    """
+    Given verticies of fault trace, extract nodes for profile inversions.
+    """
+    nodes = {}
+    UTMx      = fault['UTMx'].values
+    UTMy      = fault['UTMy'].values
+
+    # Initialize node arrays
+    UTMx_n   = np.empty(len(fault) - 1)
+    UTMy_n   = np.empty(len(fault) - 1)
+    strike_n = np.empty(len(fault) - 1)
+    keys_n   = []
+
+    for i in range(len(fault) - 1):
+        UTMx_n[i]    = (UTMx[i + 1] + UTMx[i])/2
+        UTMy_n[i]    = (UTMy[i + 1] + UTMy[i])/2
+        strike_n[i] = 360 + np.arctan((UTMx[i + 1] - UTMx[i])/(UTMy[i + 1] - UTMy[i]))*180/np.pi
+        keys_n.append(f'F{i}')
+
+    # Write to dataframe
+    nodes = pd.DataFrame({'UTMx': UTMx_n, 'UTMy': UTMy_n, 'Strike': strike_n}, index=keys_n)
+
+    return nodes
 
