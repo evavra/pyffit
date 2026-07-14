@@ -1,30 +1,10 @@
 import os
-import sys
-import time
-import shutil
 import numpy as np
 import pandas as pd
 from pyproj import CRS, Proj
 from scipy.interpolate import interp1d
 
-# ---------------------------- Classes ----------------------------
-class Logger(object):
-    """
-    Class to allow for print statments to be echoed to a log file.
 
-    Usage: add the following line to the beginning of the script.
-        sys.stdout = pyffit.utilities.Logger()
-
-    """
-    def __init__(self, filename, mode='w'):
-        self.terminal = sys.stdout
-        self.log = open(filename, mode)
-
-    def write(self, message):
-        self.terminal.write(message)
-        self.log.write(message)  
-
-# ---------------------------- Methods ----------------------------
 def proj_ll2utm(x, y, crs_epsg, inverse=False):
     """
     Project WGS84 lon/lat coordinates to UTM coordinates.
@@ -39,9 +19,11 @@ def proj_ll2utm(x, y, crs_epsg, inverse=False):
     hsphere - specify hemisphere. Default is north, specify for south.
     """
     # Get CRS
-    # Define projection
-    # myProj = Proj(f'+proj=utm +zone={zone}, +{hsphere} +ellps=WGS84 +datum=WGS84 +units=m +no_defs')
-    myProj = Proj(CRS.from_epsg(crs_epsg))
+    # Define projection — accept either an EPSG code (int/numeric string) or a raw proj4 string
+    if isinstance(crs_epsg, str) and crs_epsg.strip().startswith('+'):
+        myProj = Proj(crs_epsg)           # proj4 string (e.g. custom Transverse Mercator)
+    else:
+        myProj = Proj(CRS.from_epsg(crs_epsg))  # standard EPSG code
 
     # Determine projection direction
     if inverse:
@@ -138,11 +120,21 @@ def get_local_xy_coords(lon, lat, origin, EPSG='32611', unit='km'):
     else:
         scale = 1
 
-    # Convert origin to UTM
-    origin_utm = proj_ll2utm(origin[0], origin[1], EPSG)
+    # Build a custom Transverse Mercator projection centred on the reference longitude.
+    # This avoids the distortion and coordinate jumps that occur when data crosses a
+    # UTM zone boundary — a fixed EPSG zone is only valid within its 6° longitude band,
+    # so any pixels outside that band are projected incorrectly, inflating the quadtree
+    # bounding box and producing empty tiles / NaN-filled downsampled data.
+    # The custom projection below is always centred on origin[0], so it remains valid
+    # regardless of how wide the scene is or which UTM zones it spans.
+    proj_str = (f'+proj=tmerc +lat_0=0 +lon_0={origin[0]} +k=0.9996 '
+                f'+x_0=500000 +y_0=0 +datum=WGS84 +units=m +no_defs')
 
-    # Convert coordinates to UTM
-    x, y = proj_ll2utm(lon, lat, EPSG)
+    # Convert origin to projected coordinates
+    origin_utm = proj_ll2utm(origin[0], origin[1], proj_str)
+
+    # Convert data coordinates to projected coordinates
+    x, y = proj_ll2utm(lon, lat, proj_str)
 
     # Reference and scale accordingly
     x = (x - origin_utm[0]) * scale
@@ -338,73 +330,18 @@ def clip_grid(x, y, grid, region, extent=False):
         return x_clip, y_clip, grid_clip
 
 
-def check_dir_tree(dir_path, clear=False):
+def check_dir_tree(dir_path):
     """
-    Check if directory tree exists and create directories if not. 
-    Specify clear=True to overwrite existing directory
+    Check if directory tree exists and create directories if not.
     """
 
-    if not os.path.exists(dir_path):
-        os.makedirs(dir_path)
-    else:
-        if clear:
-            shutil.rmtree(dir_path)  
-            os.makedirs(dir_path)
+    dirs = dir_path.split('/')
 
-
-    # dirs = dir_path.split('/')
-
-    # for l in range(len(dirs)):
-    #     if len(dirs[l]) == 0:
-    #         continue
-    #     else:
-    #         sub_dir = '/'.join(dirs[:l + 1])
-    #         if os.path.isdir(sub_dir) is not True:
-    #             os.mkdir(sub_dir)
+    for l in range(len(dirs)):
+        if len(dirs[l]) == 0:
+            continue
+        else:
+            sub_dir = '/'.join(dirs[:l + 1])
+            if os.path.isdir(sub_dir) is not True:
+                os.mkdir(sub_dir)
     return
-
-
-def convert_timedelta(td, unit='Y'):
-    """
-    Convert timedelta to years (Y) or days (D)
-    """
-    dt = td/np.timedelta64(1, 'D')
-
-    if unit == 'Y':
-        dt /= 365.25
-    return float(dt)
-
-
-def ongoing_run_time(message, time_prev, units='s'):
-    """
-    Print operation run time and return current time.
-    Time is printed at end of message with units appended.
-    Default is seconds ('s')
-    """
-
-    time_now = time.time()
-    dt       = time_now - time_prev
-
-    if units != 's':
-        if units == 'min':
-            dt /= 60
-        elif units == 'hr':
-            dt /= 3600 
-
-    print(f'{message} {dt:.1f} {units}')
-
-    return time_now
-
-
-def get_padded_integer_string(i, i_ref):
-    """
-    Pad integer i with zeros if lower order than i_ref
-    """
-
-    order     = len(str(i))
-    order_ref = len(str(i_ref))
-
-    # if len(diff) > 1:
-    return ''.join(['0' for k in range(order_ref - order)]) + str(i)
-    
-

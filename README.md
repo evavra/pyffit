@@ -33,9 +33,9 @@ Several other packages you may need to install are:
 - [`corner`](https://corner.readthedocs.io/en/latest/): plotting MCMC sampling results
 - [`pyproj`](https://pypi.org/project/pyproj/): handling geographic coordinate systems
 - [`cartopy`](https://scitools.org.uk/cartopy/docs/latest/gallery/index.html): handling and plotting geopatial datasets
-- ['cmcrameri']: (https://pypi.org/project/cmcrameri/0.9/):  a basic Python wrapper around Fabio Crameri's perceptually uniform colour maps
-- ['tqdm']: (https://pypi.org/project/tqdm/): showing the inversion progress
-- ['corner']: (https://pypi.org/project/corner/) corner plots
+- [`cmcrameri`](https://pypi.org/project/cmcrameri/0.9/):  a basic Python wrapper around Fabio Crameri's perceptually uniform colour maps 
+- [`tqdm`](https://pypi.org/project/tqdm/): showing the inversion progress   
+- [`corner`](https://pypi.org/project/tqdm/): corner plots
 
 I would recommend using [Conda](https://conda.io/projects/conda/en/latest/index.html) to create a new Python environment to install and manage these packages. 
 Or simply try 'pip install'
@@ -60,7 +60,7 @@ To demonstrate the inversion, I have created a synthetic example for the case of
 
 
 ### 2. Quadtree downsampling
-![alt text](https://github.com/evavra/pyffit/blob/main/examples/quadtree_init_synthetic_data_1.png "Downsampled line-of-sight displacements")
+![alt text](https://github.com/evavra/pyffit/blob/main/examples/quadtree_synthetic_data_1.png "Downsampled line-of-sight displacements")
 
 
 ### 3. MCMC Results
