@@ -9,8 +9,730 @@ def main():
     return
 
 
+<<<<<<< HEAD
+class ResQuadTree:
+    """
+    Quadtree object obtained through resolution-based downsampling.
+
+    ATTRIBUTES:
+    x, y (k,) - downsampled coordinates
+    data (k,) - downsamled data values
+    std (k,)  - downsampled data standard deviations
+    """
+
+    def __init__(self, x, y, data, look, data_index, fault, data_extent=[], mu=1, eta=1, width_min=0.1, width_max=5, smoothing=True, edge_slip=True,
+                    iter=0, max_iter=100, resolution_threshold=0.02, max_intersect_width=0.5, min_fault_dist=0, poisson_ratio=0.25, verbose=False, 
+                    disp_components=[0, 1, 2], slip_components=[0, 1, 2], rotation=np.nan, plot=True, quadtree_dir='.'):
+
+        # Save parameter values
+        self.mu                   = fault.mu
+        self.eta                  = fault.eta
+        self.width_min            = width_min
+        self.width_max            = width_max
+        self.max_iter             = max_iter
+        self.resolution_threshold = resolution_threshold
+        self.max_intersect_width  = max_intersect_width
+        self.poisson_ratio        = poisson_ratio
+        self.disp_components      = disp_components
+        self.slip_components      = slip_components
+        self.rotation             = rotation
+        self.min_fault_dist       = min_fault_dist
+        self.quadtree_dir         = quadtree_dir
+        self.smoothing            = smoothing
+        self.edge_slip            = edge_slip
+
+        if len(data_extent) != 4:
+            self.extent = [x.min(), x.max(), y.min(), y.max()]
+
+        # Get cells
+        cells = resolution_sampling(x, y, data, look, data_index, fault, data_extent=self.extent, width_min=width_min, width_max=width_max, smoothing=smoothing, edge_slip=edge_slip,
+                                         iter=iter, max_iter=max_iter, resolution_threshold=resolution_threshold, max_intersect_width=max_intersect_width, 
+                                         disp_components=disp_components, slip_components=slip_components, rotation=rotation, min_fault_dist=min_fault_dist,)
+        self.compute_values(cells)
+
+        n_points = self.x.size
+
+        # Plot
+        if plot:
+            vmax = np.mean(np.abs(self.data)) + np.std(np.abs(self.data))
+            vlim = [-vmax, vmax]
+            label = 'Displacement (mm)'
+            title = f'Iteration {iter}: {n_points} points'
+
+            # Plot map
+            fig, ax = plt.subplots(figsize=(6, 6))
+            ax.scatter(x[~np.isnan(data)], y[~np.isnan(data)], marker='.', s=1, c='lightgray')
+            ax.plot(fault.trace[:, 0], fault.trace[:, 1], c='k', linewidth=1)
+            im = ax.scatter(self.x, self.y, marker='.', s=10, c=self.data, vmin=vlim[0], vmax=vlim[1], cmap=cmc.vik)
+            # im = ax.scatter(self.x[cell_buffer], y_origin[cell_buffer], c='gold', marker='o')
+            # im = ax.scatter(self.x[cell_intersections], y_origin[cell_intersections], c='C3', marker='o')
+            ax.set_aspect(1)
+            ax.set_title(title)
+            
+            plt.colorbar(im, label=label)
+            plt.savefig(f'{quadtree_dir}/map.png', dpi=300)
+            plt.close()
+        
+            # Plot rotated downsampled data
+            s = 5
+            plot_rotated_fault(fault, self.x, self.y, self.data, vlim=vlim, cmap=cmc.vik, label=label, s=s, title=title, file_name=f'{quadtree_dir}/rotated_quadtree.png')
+
+            # Plot rotated raw data
+            s = 1
+            plot_rotated_fault(fault, x[~np.isnan(data)], y[~np.isnan(data)], data[~np.isnan(data)], vlim=vlim, cmap=cmc.vik, label=label, s=s, title=title, file_name=f'{quadtree_dir}/rotated_raw.png')
+
+
+            # Plot rotated STD
+            vlim  = [0, 10]
+            label = 'Standard deviation (mm)'
+            s     = 5
+
+            plot_rotated_fault(fault, self.x, self.y, self.std,  vlim=vlim, cmap=cmc.lajolla, label=label, s=s, title=title, file_name=f'{quadtree_dir}/rotated_std.png')
+    
+            
+    def compute_values(self, cells):
+
+        self.cells = cells
+
+        # Discard NaN values
+        i_nans = np.where(np.isnan([cell.value for cell in self.cells]))
+
+        for i in sorted(i_nans, reverse=True):
+            self.cells = np.delete(self.cells, (i), axis=0)
+
+        self.x          = np.empty(len(self.cells))
+        self.y          = np.empty(len(self.cells))
+        self.data       = np.empty(len(self.cells))  
+        self.std        = np.empty(len(self.cells))  
+        self.look       = np.empty((len(self.cells), 3)) 
+        self.count      = np.empty(len(self.cells))  
+        self.real_count = np.empty(len(self.cells))  
+        self.nan_count  = np.empty(len(self.cells))  
+        self.nan_frac   = np.empty(len(self.cells))  
+        self.side       = np.empty(len(self.cells))  
+        self.intersects = np.empty(len(self.cells))  
+
+        for i in range(len(self.cells)):
+            cell = self.cells[i]
+
+            self.x[i]          = cell.origin.x
+            self.y[i]          = cell.origin.y
+            self.data[i]       = cell.value  
+            self.std[i]        = cell.std
+            self.count[i]      = cell.data.values.size
+            self.real_count[i] = np.sum(~np.isnan(cell.data.values))
+            self.nan_count[i]  = self.count[i] - self.real_count[i]
+            self.nan_frac[i]   = self.nan_count[i]/self.count[i]
+            self.side[i]       = cell.side
+            self.intersects[i] = cell.intersects
+            self.look[i, :]    = cell.look
+
+
+    def write(self, filename):
+        """
+        Save ResQuadTree to disk.
+        """
+        print('\n' + f'Saving ResQuadTree to {filename}')
+
+        with open(filename, 'wb') as f:
+            pickle.dump(self, f)
+
+
+    def histogram(self, data='cell_count', fig_kwargs={}, hist_kwargs={}, filename='', show=True):
+        """
+        Make histogram of scalar cell values [cell_count, real_count, nan_count, nan_frac]
+        """
+        data_dict = dict(cell_count=self.count, real_count=self.real_count, nan_count=self.nan_count, nan_frac=self.nan_frac)
+        
+        # Plot
+        fig, ax = plt.subplots(**fig_kwargs)
+        ax.hist(data_dict[data], **hist_kwargs)
+        ax.set_xlabel(data)
+        ax.set_ylabel('Count')
+        ax.set_title(rf'Average = {np.mean(data_dict[data]):.1f} $\pm$ {np.std(data_dict[data]):.1f}')
+        if len(filename) > 4:
+            plt.savefig(filename)
+
+        if show:
+            plt.show()
+
+        return fig, ax
+
+
+    def check_parameters(self, params):
+        """
+        Check if ResQuadTree has specified parameter values
+        """
+
+        for key in params.keys():
+            tree_value = getattr(self, key)
+
+            if tree_value == params[key]:
+                continue
+            else:
+                print(f'Conflict with {key}: {tree_value} {params[key]}')
+                return False
+
+        return True
+
+
+    def display_parameters(self, params):
+        """
+        Print specified ResQuadTree parameter values
+        """
+
+        lengths = [len(key) for key in params.keys()]
+
+        max_length = max(lengths)
+
+        print('\nResQuadTree parameters:')
+        for key in params.keys():
+            tree_value = getattr(self, key)
+
+            pad = max_length - len(key) + 2
+
+            print(f'    {key}:{" ".join(["" for i in range(pad)])}{tree_value}')
+
+        return
+
+
+class CellData:
+    """
+    Data and coordinates contained within a Cell object
+    """
+
+    def __init__(self, x, y, data, index):
+        self.x      = x
+        self.y      = y
+        self.values = data
+        self.index  = index
+        self.side   = []
+        self.sign   = []
+
+
+class CellOrigin:
+    """
+    Origin of quadtree Cell
+    """
+
+    def __init__(self, origin):
+        self.x = origin[0]
+        self.y = origin[1]
+
+
+class Cell:
+    """
+    Class to contain attributes of a Quadtree or Resolution downsampling cell.
+    
+    ATTRIBUTES:
+    x, y (k,)     - downsampled coordinates
+    data (k,)     - downsamled data values
+    std (k,)      - downsampled data standard deviations
+    dims (k,)     - dimensions of each cell in x/y units.
+    extents (k,)  - extent of each cell in x/y coordinates.
+    nan_frac (k,) - fraction of nan values in each cell.
+    """
+
+    def __init__(self, x, y, data, look, index, origin, extent, cell_slice, trace, sign=0, side=[], intersects=False):
+        self.x          = x  
+        self.y          = y  
+        self.data       = CellData(x, y, data, index)  
+        self.origin     = CellOrigin(origin)  
+        self.extent     = extent
+        self.cell_slice = cell_slice
+        self.width      = np.max([extent[1] - extent[0], extent[3] - extent[2]])
+        self.look       = np.mean(look, axis=0)
+
+
+        # If generating for the first time, determine intersection status
+        if (sign == 0) & (len(side) != data.size):
+            # Check if cell intersects with fault
+            i_intersect = np.where((trace[:, 0] >= self.extent[0]) & (trace[:, 0] <= self.extent[1]) & (trace[:, 1] >= self.extent[2]) & (trace[:, 1] <= self.extent[3]))[0]
+            
+            # Compute minimum distance to fault
+            self.min_fault_dist = get_min_fault_dist(trace, self.extent)
+
+            # Get side of fault, handle intersections, and compute cell values
+            # a) No intersections
+            if len(i_intersect) == 0: 
+                origin_dist = np.sqrt((trace[:, 0] - self.origin.x)**2 + (trace[:, 1] - self.origin.y)**2)
+
+                # # Get nearest fault segment
+                i_nearest = np.where(origin_dist == origin_dist.min())[0][0]
+                
+                if i_nearest == 0:
+                    trace_seg = trace[:2, :]
+                elif i_nearest == (len(trace) - 1):
+                    trace_seg = trace[-2:, :]
+                else:
+                    trace_seg = trace[i_nearest - 1:i_nearest +1, :]
+                self.intersects = False
+
+            # b) One node intersects
+            elif len(i_intersect) == 1: # Once node intersects
+                if i_intersect[0] == 0:
+                    trace_seg = trace[:2, :]
+                elif i_intersect[0] == trace.shape[0]:
+                    trace_seg = trace[-2:, :]
+                else:
+                    trace_seg = trace[i_intersect[0] - 1:i_intersect[0] + 1, :]
+                self.intersects = True
+
+            # c) Multiple nodes intersect
+            else:
+                # Select trace segment within cell
+                trace_seg = trace[i_intersect]
+                self.intersects = True
+                
+            # Check which side the data are on
+            side = np.zeros_like(self.data.values)
+
+            for i in range(len(self.data.values)):
+                if len(trace_seg) == 0:
+                    print(trace_seg, i_intersect)
+                side[i] = point_side_of_line(trace_seg, (self.data.x[i], self.data.y[i]))
+
+            if sum(side == -1) > sum(side == 1):
+                # Use west
+                sign = -1
+                label = 'West'
+            else:
+                # Use east
+                sign = 1
+                label = 'East'
+
+        # Use intersection value
+        else:
+            self.intersects = intersects
+
+        # Compute values using majority side
+        self.side       = sign
+        self.data.side  = side
+        self.value      = np.nanmean(self.data.values[side == sign])  
+        self.std        = np.nanstd(self.data.values[side == sign])  
+        self.nan_frac   = np.sum(np.isnan(self.data.values[side == sign])/self.data.values[side == sign].size)
+
+
+@jit(nopython=True)
+def get_min_fault_dist(trace, extent):
+    dist = np.empty((2, 2))
+
+    for i in range(2):
+        for j in range(2):
+            dist[i, j] = np.min(np.sqrt((trace[:, 0] - extent[i])**2 + (trace[:, 1] - extent[j + 2])**2))
+    return np.min(dist)
+
+
+# ------------------ Application methods ------------------
+def get_downsampled_time_series(datasets, inversion_inputs, fault, n_dim, remove_mean=False, dataset_name='data', file_name='downsampled_data.h5'):
+    """
+    Generate matrix containing downsampled time series data based off of an existing quadtree structure
+    """
+
+    # Load downsampled time series matrix if already exists
+    if os.path.exists(file_name):
+        print('\n##### Loading time series #####')
+        with h5py.File(file_name, 'r') as file:
+            d   = file['d'][()]
+            std = file['std'][()]
+
+    # Apply existing quadtree to time-series
+    else:
+        print('\n##### Downsampling time series #####')
+        d    = np.zeros((datasets[dataset_name].date.size, inversion_inputs[dataset_name].tree.data.size + n_dim), dtype=float)
+        std  = np.zeros((datasets[dataset_name].date.size, inversion_inputs[dataset_name].tree.data.size), dtype=float)
+        look = np.array([datasets[dataset_name]['look_e'].compute().data.flatten(), 
+                         datasets[dataset_name]['look_n'].compute().data.flatten(), 
+                         datasets[dataset_name]['look_u'].compute().data.flatten()]).T
+
+        start = time.time()
+        n_date = len(datasets[dataset_name].date)
+
+        for k in range(0, n_date):
+            start_date = time.time()
+            
+            date = datasets[dataset_name].date.values[k]
+
+            # Select data for date
+            data = datasets[dataset_name]['z'].isel(date=k).compute().data
+            
+            if remove_mean:
+                data -= np.nanmean(data)
+
+            # Redo cells
+            cells = update_cells(inversion_inputs[dataset_name].tree.cells, datasets[dataset_name].coords['x'].compute().data.flatten(), datasets[dataset_name].coords['y'].compute().data.flatten(), 
+                                 data.flatten(), np.arange(0, datasets[dataset_name].coords['x'].size), look, fault.trace_interp)
+
+            # Update quadtree
+            inversion_inputs[dataset_name].tree.compute_values(cells)
+            data_samp = inversion_inputs[dataset_name].tree.data
+            if remove_mean:
+                data_samp -= np.mean(data_samp)
+
+            d[k, :inversion_inputs[dataset_name].tree.data.size] = data_samp 
+            std[k, :] = inversion_inputs[dataset_name].tree.std
+
+
+            end_date = time.time() - start_date
+            print(f'{date} ({k + 1}/{n_date}) completed in {end_date:.1f} s')
+
+        # Save data to disk
+        print('\n' + f'Saving time series matrix d to {file_name}')
+
+        with h5py.File(file_name, 'w') as file:
+            file.create_dataset('d', data=d)
+            file.create_dataset('std', data=std)
+
+        end = time.time() - start
+        print(f'Data computation time: {end:.1f} s')
+
+    return d, std
+
+
+# ------------------ Resolution quadtree methods ------------------
+def resolution_sampling(x, y, data, look, data_index, fault, min_fault_dist=0, data_extent=[], width_min=0.1, width_max=5, iter=0, max_iter=100, resolution_threshold=0.02, 
+                        max_intersect_width=0.5, smoothing=True, edge_slip=True, disp_components=[0, 1, 2], slip_components=[0, 1, 2], rotation=np.nan,
+                     ):
+    """
+    Perform resolution-based downsampling, based on the procedure described by Lohman & Simons (2005).
+    
+    INPUT:
+    Data
+        x             - x-coordinates for original data
+        y             - y-coordinates for original data
+        data          - original data values 
+        look          - look vectors for original data coordiantes
+        data_index    - indicies for original data
+        (data_extent) - bounds for sampling area  (default: [xmin, xmax, ymin, ymax])
+    
+    Model
+        R               - smoothing regularization matrix
+        E               - zero-edge-slip regularization matrix
+        mesh            - fault mesh verticies 
+        triangles       - fault mesh elements    
+        trace           - high-resolution fault trace
+        mu              - smoothing regularization value  (default = 1.0 -- should be same as inversion!)
+        eta             - zero-edge-slip regularization value (default = 1.0 -- should be same as inversion!)
+        poisson_ratio   - Poisson ratio for fault model (default = 0.25 -- should be same as inversion!)
+        slip_components - components of fault slip to use (defaul = [0, 1, 2] for strike-slip, dip-slip, opening)
+        verbose         - print updates on Green's function generation (default = False)
+
+
+    Sampling
+        max_iter             - max. allowed sampling iterations (default = 100)
+        width_min            - min. allowed cell width (default = 0.1 km) 
+        width_max            - max. allowed cell width (default = 5.0 km) 
+        resolution_threshold - max. allowed resolution value for cells (default = 0.02) 
+        max_intersect_width  - min. allowed size for cells that intersect the fault (default = 0.5 km) 
+        min_fault_dist       - min. buffer distance to fault to enforce max_intersect_width
+
+    OUTPUT
+        cells - list of Cell objects in quadtree instance.
+    """
+
+    if len(data_extent) != 4:
+        data_extent = np.array([np.min(x), np.max(x), np.min(y), np.max(y)])
+    
+    # Get data dimensions
+    data_dim = np.array([data_extent[1] - data_extent[0], data_extent[3] - data_extent[2]]) # dimensions of current data cell
+
+    # Get number of samples
+    n_x = int(data_dim[0]/width_max) + 1
+    n_y = int(data_dim[1]/width_max) + 1
+
+    # Get initial cell grid
+    x_edge, y_edge, x_origin, y_origin = get_grid_domain(data_extent, n_x, n_y)
+
+    # Get cell info
+    cells              = get_cells_grid(x, y, data, data_index, look, x_edge, y_edge, x_origin, y_origin, fault.trace_interp)
+    cell_widths        = np.array([cell.width for cell in cells])
+    cell_looks         = np.array([cell.look for cell in cells])
+    cell_intersections = np.array([cell.intersects for cell in cells])
+    cell_buffer        = np.array([cell.min_fault_dist for cell in cells]) <= min_fault_dist
+
+    # Get resolution matrix
+    N = fault.resolution_matrix(x_origin, y_origin, mode='data', smoothing=smoothing, edge_slip=edge_slip, disp_components=disp_components, slip_components=slip_components, rotation=rotation, squeeze=True)
+
+    # Perform iterations until all cells are below resolution threshold or have reached min. cell width
+    n_min_width        = 0
+    n_near_field_width = sum(((cell_intersections | cell_buffer) & (cell_widths > max_intersect_width)))
+    n_resolved         = sum(np.diag(N) < resolution_threshold) + n_min_width - n_near_field_width
+
+    print('')
+    print(f'Iteration {0}...')
+    print(f'Number of samples:        {n_x*n_y}')
+    print(f'Number of resolved cells: {n_resolved}')
+    print(f'Cell widths:              {" ".join([str(w) for w in np.unique(np.round(cell_widths, 3))])}')
+    print(f'N:                        {np.min(np.diag(N)):.2e} - {np.max(np.diag(N)):.2e} \n')
+
+    while ((sum(np.diag(N) < resolution_threshold) + n_min_width - n_near_field_width) != len(cells)) & (iter != max_iter):
+        
+        iter += 1
+        print(f'Iteration {iter}...')
+
+        # Get unresolved cells        
+        # Unresolved if resolution above threshold or if cell intersects with fault or is within buffer distance and is larger than specified max. width               
+        i_unresolved = np.where((np.diag(N) > resolution_threshold) | ((cell_intersections | cell_buffer) & (cell_widths > max_intersect_width)))[0]
+
+        for i in sorted(i_unresolved, reverse=True):
+            cell_extent = cells[i].extent
+
+            if np.max((cell_extent[1] - cell_extent[0], cell_extent[3] - cell_extent[2]))/2 > width_min:
+
+                # Get initial cell grid
+                x_edge_new, y_edge_new, x_origin_new, y_origin_new = get_grid_domain(cell_extent, 2, 2)
+
+                # Get cell info
+                cells_new = get_cells_grid(x, y, data, data_index, look, x_edge_new, y_edge_new, x_origin_new, y_origin_new, fault.trace_interp)
+
+                # Update lists and arrays
+                cells.extend(cells_new)
+
+                # Update with new cells
+                x_origin = np.concatenate((x_origin, x_origin_new))
+                y_origin = np.concatenate((y_origin, y_origin_new))
+
+                # Remove defunct cells in reverse order to avoid index shifting
+                cells.pop(i)
+                x_origin = np.delete(x_origin, (i), axis=0)
+                y_origin = np.delete(y_origin, (i), axis=0)
+
+            else:
+                n_min_width += 1
+
+        # Update widths
+        cell_widths        = np.array([cell.width for cell in cells])
+        cell_looks         = np.array([cell.look for cell in cells])
+        cell_intersections = np.array([cell.intersects for cell in cells])
+        cell_buffer        = np.array([cell.min_fault_dist for cell in cells]) <= min_fault_dist
+
+        # Get resolution matrix
+        N = fault.resolution_matrix(x_origin, y_origin, mode='data', smoothing=smoothing, edge_slip=edge_slip, disp_components=disp_components, slip_components=slip_components, rotation=rotation, squeeze=True)
+
+        # Update counts``
+        n_near_field_width = sum(((cell_intersections | cell_buffer) & (cell_widths > max_intersect_width)))
+        n_resolved         = sum(np.diag(N) < resolution_threshold) + n_min_width - n_near_field_width
+
+        # Print results
+        print(f'Number of samples:        {len(x_origin)}')
+        print(f'Number of resolved cells: {n_resolved}')
+        print(f'Cell widths:              {" ".join([str(w) for w in np.unique(np.round(cell_widths, 3))])}')
+        print(f'N:                        {np.min(np.diag(N)):.2e} - {np.max(np.diag(N)):.2e} \n')
+
+        # Make plots
+        # if plot:
+        #     if iter == 1:
+        #         check_dir_tree(run_dir + '/Sampling', clear=True)
+
+        #     # Plot histogram and matrix
+        #     fig, axes = plt.subplots(1, 2, figsize=(6, 4))
+        #     fig.suptitle(f'Min. = {np.min(N):.2f}, Max. = {np.max(N):.2f}')
+        #     im0 = axes[0].hist(np.diag(N), bins=50)
+        #     im1 = axes[1].imshow(N, cmap='viridis', vmin=0, vmax=np.mean(N) + 3*np.std(N), interpolation='none')
+        #     plt.colorbar(im1, label='Resolution')
+        #     plt.savefig(f'{run_dir}/Sampling/Cell_Stats_Iteration-{iter}.png') 
+        #     plt.close()
+
+        #     # Plot point distribution
+        #     n_points = x_origin.size
+
+        #     fig, ax = plt.subplots(figsize=(6, 6))
+        #     ax.scatter(x[~np.isnan(data)], y[~np.isnan(data)], marker='.', s=1, c='gainsboro')
+        #     ax.plot(fault.trace[:, 0], fault.trace[:, 1], c='k', linewidth=1)
+        #     im = ax.scatter(x_origin, y_origin, c=np.diag(N), marker='o', cmap='viridis', vmin=0, vmax=resolution_threshold)
+        #     im = ax.scatter(x_origin[cell_buffer], y_origin[cell_buffer], c='gold', marker='o')
+        #     im = ax.scatter(x_origin[cell_intersections], y_origin[cell_intersections], c='C3', marker='o')
+        #     ax.set_aspect(1)
+        #     ax.set_title(f'Iteration {iter}: {n_points} points')
+        #     plt.colorbar(im, label='Resolution')
+        #     plt.savefig(f'{run_dir}/Sampling/Cell_Map_Iteration-{iter}.png')
+        #     plt.close()
+
+    return cells
+
+
+def get_grid_domain(extent, n_x, n_y):
+    """
+    Given a spatial region, get coordinates for uniform grid of specified dimensions.
+
+    INPUT
+    extent - spatial extent of grid [xmin, xmax, ymin, ymax]
+    n_x - number of elements in x-direction
+    n_y - number of elements in y-direction
+    OUTPUT
+    x_edge, y_edge     - vertex coordinates of grid
+    x_origin, y_origin - origin coordinates of grid
+    """
+
+    # Get coordinate ranges
+    x_rng_edge   = np.linspace(extent[0], extent[1], n_x + 1)
+    y_rng_edge   = np.linspace(extent[2], extent[3], n_y + 1)
+    x_rng_origin = x_rng_edge[:-1] + np.diff(x_rng_edge)/2
+    y_rng_origin = y_rng_edge[:-1] + np.diff(y_rng_edge)/2
+
+    # Get full grid
+    x_edge, y_edge     = np.meshgrid(x_rng_edge, y_rng_edge)
+    x_origin, y_origin = np.meshgrid(x_rng_origin, y_rng_origin)
+
+    return x_edge, y_edge, x_origin.flatten(), y_origin.flatten()
+
+
+def get_cells_grid(x, y, data, data_index, look, x_edge, y_edge, x_origin, y_origin, trace):
+    """
+    Get a uniform grid of cells
+    """
+    cells = []
+    cell_looks = []        
+    
+    for i in range(x_edge.shape[0] - 1):
+        for j in range(x_edge.shape[1] - 1):
+            cell_extent = np.array([x_edge[i, j], x_edge[i, j + 1], y_edge[i, j], y_edge[i + 1, j]])
+
+            # Get index slices for cells            
+            cell_slice = np.where((x >= cell_extent[0]) & (x <= cell_extent[1]) & (y >= cell_extent[2]) & (y <= cell_extent[3]))[0]
+
+            # Get information for each new cell
+            cell_x     = x[cell_slice]
+            cell_y     = y[cell_slice]
+            cell_data  = data[cell_slice]
+            cell_index = data_index[cell_slice]
+            cell_look  = look[cell_slice, :]
+
+            # Add to list
+            k = np.ravel_multi_index((i, j), (x_edge.shape[0] - 1, x_edge.shape[1] - 1))
+            cells.append(Cell(cell_x, cell_y, cell_data, cell_look, cell_index, (x_origin[k], y_origin[k]), cell_extent, cell_slice, trace))
+    
+    return cells
+
+
+def update_cells(cells, x, y, data, data_index, look, trace, cell_slice=[]):
+    """
+    Populate existing cells with new data.
+    """
+
+    new_cells = []
+    params    = []
+
+    where_time = 0
+    slice_time = 0
+    cell_time  = 0
+
+    for i in range(len(cells)):
+        cell = cells[i]
+
+        # Get index slices for cells          
+        # cell_slice = np.where((x >= cell.extent[0]) & (x <= cell.extent[1]) & (y >= cell.extent[2]) & (y <= cell.extent[3]))[0]
+        cell_slice = cell.cell_slice
+        
+        # Get information for each new cell
+        cell_x     = x[cell_slice]
+        cell_y     = y[cell_slice]
+        cell_data  = data[cell_slice]
+        cell_index = data_index[cell_slice]
+        cell_look  = look[cell_slice, :]
+
+        new_cells.append(Cell(cell_x, cell_y, cell_data, cell_look, cell_index, (cell.origin.x, cell.origin.y), cell.extent, cell_slice, trace, sign=cell.side, side=cell.data.side, intersects=cell.intersects))
+        
+        # params.append([cell.origin, cell.extent, x, y, data, data_index, look, trace])
+
+    # os.environ["OMP_NUM_THREADS"] = "1"
+    # start       = time.time()
+    # n_processes = multiprocessing.cpu_count()
+    # pool        = multiprocessing.Pool(processes=n_processes)
+    # new_cells     = pool.map(update_cell, params)
+    # pool.close()
+    # pool.join()
+
+    return new_cells
+
+
+def check_fault_intersection(cell, trace, buffer=0):
+    """
+    Check if cell intersects with fault trace.
+    """
+    # Check for intersections
+    intersect = np.sum((trace[:, 0] >= cell.extent[0]) & (trace[:, 0] <= cell.extent[1]) & (trace[:, 1] >= cell.extent[2]) & (trace[:, 1] <= cell.extent[3]))
+    
+    if intersect > 0:
+
+        # Check for vertices within buffer distance
+        dist = np.empty((2, 2))
+
+        for i in range(2):
+            for j in range(2):
+                dist[i, j] = np.sqrt((trace[:, 0] - cell_extent[i])**2 + (trace[:, 1] - cell_extent[j + 2])**2)
+
+        if np.min(dist) >= buffer:
+            return True
+    else:
+        return False
+
+
+def point_side_of_segment(p1, p2, point):
+    """
+    Determine the side of a point relative to a line segment defined by two points.
+
+    Parameters:
+    p1, p2 : tuple of floats
+        Coordinates of the points defining the line segment (x1, y1) and (x2, y2).
+    point : tuple of floats
+        Coordinates of the point to check (x, y).
+
+    Returns:
+    float
+        Positive if point is on the left side, negative if on the right side, and zero if on the segment.
+    """
+
+    x1, y1 = p1
+    x2, y2 = p2
+    x, y   = point
+
+    # Cross product to determine the side
+    cross_product = (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1)
+
+    return cross_product
+
+
+@jit(nopython=True)
+def point_side_of_line(curve, point):
+    """
+    Determine the side of a point relative to a curved line defined by multiple points.
+
+    Parameters:
+    curve : array-like, shape (n, 2)
+        The coordinates of the points defining the curved line (x_i, y_i).
+    point : tuple of floats
+        Coordinates of the point to check (x, y).
+
+    Returns:
+    float
+        Positive if point is on the left side of all segments, negative if on the right side,
+        and zero if on the curve.
+    """
+
+    i_nearest    = np.argmin(np.sqrt((point[0] - curve[:-1, 0])**2 + (point[1] - curve[:-1, 1])**2))
+    p1           = curve[i_nearest]
+    p2           = curve[i_nearest + 1]
+
+    # overall_sign = np.sign(point_side_of_segment(p1, p2, point))
+    x1, y1 = p1
+    x2, y2 = p2
+    x, y   = point
+
+    # Cross product to determine the side
+    cross_product = (x2 - x1) * (y - y1) - (y2 - y1) * (x - x1)
+    overall_sign = np.sign(cross_product)
+
+    return overall_sign
+
+
+# ------------------ Iterative quadtree methods ------------------
+def quadtree_unstructured(x, y, data, data_index, data_extent, fault=[], level=0, rms_min=0.1, nan_frac_max=0.9, width_min=1, width_max=50, return_object=False,
+                          x_samp=[], y_samp=[], data_samp=[], data_samp_std=[], data_tree=[], data_dims=[], data_extents=[], nan_frac=[]):
+=======
 def quadtree_unstructured(x, y, data, data_index, data_extent, fault=[], level=0, rms_min=0.1, nan_frac_max=0.9, width_min=1, width_max=50,
              x_samp=[], y_samp=[], data_samp=[], data_samp_std=[], data_tree=[], data_dims=[], data_extents=[], nan_frac=[]):
+>>>>>>> 43afadb418f98e46ba85ff2a2ad8b4045095eda3
     """
     Perform recursive quadtree downsampling on unstructured data (n,) to obtain a down-sampled set of points (k,)
     based off of data gradients.
